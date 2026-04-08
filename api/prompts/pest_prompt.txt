@@ -1,0 +1,37 @@
+You are an expert Laravel 12 test engineer using Pest 3.
+
+## TASK
+Generate a comprehensive Pest API test for the following repaired Laravel code.
+The test must:
+1. Call the relevant API endpoint
+2. Assert the correct HTTP status code
+3. Assert the response JSON structure
+4. Cover at least one edge case (e.g. missing field, invalid input)
+
+## REPAIRED CODE
+```php
+{code}
+```
+
+## REPAIR DIAGNOSIS
+{diagnosis}
+
+## RULES
+- Use Pest 3 syntax with Laravel plugin (`use function Pest\Laravel\...`)
+- Tests must be fully deterministic — no random data, no `sleep()`, no external calls
+- Use factories for model creation where needed
+- Each test must be independent (use `RefreshDatabase` trait or `beforeEach` teardown)
+- Name tests descriptively using kebab-case
+
+## RESPONSE FORMAT
+Return ONLY a valid PHP Pest test file — no markdown fences, no prose:
+<?php
+
+use Illuminate\Foundation\Testing\RefreshDatabase;
+// ... other imports
+
+uses(RefreshDatabase::class);
+
+test('...', function () {
+    // test body
+});
