@@ -1,0 +1,50 @@
+# batch_manifest.yaml — Canonical source of truth for all batch runs
+# This file drives the evaluation pipeline for the thesis experiments.
+# Edit batch_size and cases before each experiment run.
+
+project_name: laravel-ai-repair
+php_version: "8.3"
+laravel_version: "12.*"
+ai_provider: anthropic          # anthropic | openai
+ai_model: claude-sonnet-4-6
+ai_temperature: 0.0             # deterministic for reproducibility
+max_iterations: 7
+mutation_score_threshold: 80    # pest --mutate must score >= 80%
+batch_size: 10
+
+resource_limits:
+  cpus: "0.5"
+  memory: 512m
+  pids: 64
+  timeout_s: 90
+
+# Ablation flags (set one to false to run without that feature)
+use_boost_context: true
+use_mutation_gate: true
+
+# Test cases for evaluation batches
+# Add more as needed for thesis dataset
+cases:
+  - id: case-001
+    repo_path: dataset/case-001
+    type: missing_model
+    description: "Code references App\\Models\\Product which does not exist"
+    expected_iterations: 4
+
+  - id: case-002
+    repo_path: dataset/case-002
+    type: wrong_namespace
+    description: "Controller namespace does not match file location"
+    expected_iterations: 3
+
+  - id: case-003
+    repo_path: dataset/case-003
+    type: missing_import
+    description: "Uses Str:: facade without importing Illuminate\\Support\\Str"
+    expected_iterations: 2
+
+# Output config
+output:
+  results_dir: tests/integration/results
+  report_csv: tests/integration/results/batch_report.csv
+  log_level: info
