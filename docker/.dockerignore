@@ -1,0 +1,16 @@
+# .dockerignore — Exclude unnecessary files from Docker build context
+.git
+.gitignore
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.env
+*.md
+data/
+tests/
+frontend/
+mcp/
+.github/
+scripts/
