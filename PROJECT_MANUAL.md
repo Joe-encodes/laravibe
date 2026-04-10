@@ -25,7 +25,7 @@ flowchart TD
     end
 
     subgraph AI [LLM Provider]
-        Claude[Anthropic Claude/GPT-4o \n temperature=0.0]
+        Cerebras[Cerebras (OpenAI-compatible) \n temperature=0.0]
     end
 
     UI -- "Submits broken code" --> API
@@ -33,8 +33,8 @@ flowchart TD
     API -- "Runs code via docker_service.py" --> Sandbox
     Sandbox -- "Failure & Logs" --> API
     API -- "Fetches schema via boost_service.py" --> Boost
-    API -- "Requests patch via ai_service.py" --> Claude
-    Claude -- "Returns fix + Pest test" --> API
+    API -- "Requests patch via ai_service.py" --> Cerebras
+    Cerebras -- "Returns fix + Pest test" --> API
     API -- "Applies via patch_service.py" --> Sandbox
 ```
 
@@ -52,7 +52,7 @@ stateDiagram-v2
     
     CaptureError --> ContextGathering : Laravel Boost Context
     ContextGathering --> AIPrompt : Format prompt with logs & context
-    AIPrompt --> LLMResponse : Request deterministic fix (Anthropic/OpenAI)
+    AIPrompt --> LLMResponse : Request deterministic fix (Cerebras / Fast Inference)
     
     LLMResponse --> ApplyPatch : Apply patch to code & tests
     ApplyPatch --> Verify : Run Pest tests
@@ -70,16 +70,19 @@ stateDiagram-v2
 The Python 3.12 FastAPI application coordinating the entire platform.
 - **`main.py`**: The entry point for the FastAPI server, setting up lifespan events and DB init.
 - **`models.py`**: SQLAlchemy ORM definitions (`Submission` and `Iteration`).
-- **`routers/`**: HTTP endpoints including `/health`, `/repair`, `/history`, and `/evaluate`.
+- **`routers/`**: HTTP endpoints including `/health`, `/repair`, `/history`, and `/evaluate`. The `evaluate.py` router automatically maps over the `dataset/` codebase directory via the `batch_manifest.yaml` definitions.
 - **`services/`**: The core business logic.
   - `docker_service.py`: Safely spins up and destroys short-lived Docker containers (`--network=none`, `--pids-limit=64`).
   - `boost_service.py`: Communicates with Laravel Boost for live context.
-  - `ai_service.py`: Orchestrates calls to Anthropic Claude or OpenAI for generating fixes.
+  - `ai_service.py`: Orchestrates calls to Cerebras (or fallback Anthropic/OpenAI) for lightning-fast patch generations.
   - `patch_service.py`: Applies LLM-generated patches minimally.
   - `repair_service.py`: Orchestrates the main up-to-7-times iteration loop.
 
 ### `docker/` (Sandbox Environment)
 - **`laravel-sandbox/Dockerfile`**: Definitions for building the container image (`laravel-sandbox:latest`). Runs an isolated Alpine + PHP 8.3 + Laravel 12 + Pest 3 environment.
+
+### `dataset/` (Automated Evaluation)
+- This directory stores the failing Laravel PHP code cases (`case-001`, `case-002`, etc.) used by the `batch_manifest.yaml` automated evaluation pipeline.
 
 ### `frontend/` (User Interface)
 - **`index.html`**: The main page layout.
@@ -87,12 +90,13 @@ The Python 3.12 FastAPI application coordinating the entire platform.
 - **`style.css`**: Vanilla CSS for styling.
 
 ### `mcp/`
-- **`server.py`**: Exposes the platform as a tool to Cursor or Claude via the Model Context Protocol (MCP).
+- **`server.py`**: Powered by the official MCP Python SDK to expose this platform as an AI capability for Claude Code and Cursor. Properly handles the mandatory `initialize` handshake.
 
 ### Root Files
-- **`batch_manifest.yaml`**: The source of truth for all batch evaluation runs for the thesis. Configures `ai_provider`, `max_iterations`, and ablation flags.
+- **`batch_manifest.yaml`**: The source of truth for all batch evaluation runs for the thesis. Configures `ai_provider` (e.g., Cerebras), `max_iterations`, and ablation flags.
 - **`README.md`**: Quickstart operations guide.
-- **`.env` and `.env.example`**: Secure storage for keys (`ANTHROPIC_API_KEY`). Not committed to version control.
+- **`AI_REDESIGN_Specs.md`**: Guide for the upcoming modular Frontend redesign (React + Vite) with Supabase Basic Auth and enhanced history capabilities.
+- **`.env` and `.env.example`**: Secure storage for keys (`CEREBRAS_API_KEY`, etc). Not committed to version control.
 
 ## Security & Concurrency Rules
 

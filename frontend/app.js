@@ -7,7 +7,7 @@
 const API_BASE = "http://localhost:8000";   // ← change if API runs elsewhere
 
 // ── State ──────────────────────────────────────────────────────────────────────
-let editor, originalCode = "", repairedCode = "", eventSource = null;
+let editor, originalCode = "", repairedCode = "", eventSource = null, completedReceived = false;
 
 // ── Init CodeMirror ────────────────────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
@@ -79,6 +79,7 @@ async function startRepair() {
 
   originalCode = code;
   repairedCode = "";
+  completedReceived = false;
 
   // Reset UI
   clearLogs();
@@ -123,7 +124,11 @@ async function startRepair() {
 
   eventSource.onmessage = (e) => handleEvent(JSON.parse(e.data));
   eventSource.onerror = () => {
-    log("err", "SSE connection lost.");
+    // SSE fires onerror when the server closes the stream after 'complete'.
+    // Only treat it as a real error if we haven't already received the complete event.
+    if (!completedReceived) {
+      log("err", "⚠️ SSE stream disconnected. The repair may still be running — check History.");
+    }
     eventSource.close();
     resetBtn();
   };
@@ -145,11 +150,11 @@ function handleEvent(evt) {
       break;
 
     case "boost_queried":
-      log("boost", `🔍 Boost queried — component: ${data.component_type || "?"}`);
-      if (data.schema) {
-        document.getElementById("boost-content").textContent =
-          `Component: ${data.component_type} | Schema: ${data.schema ? "✓" : "✗"}`;
-      }
+      const component = data.component_type || "unknown";
+      const hasSchema = !!data.schema;
+      log("boost", `🔍 Boost — Component: ${component} | Schema: ${hasSchema ? "Detected" : "None"}`);
+      document.getElementById("boost-content").textContent = 
+        `Laravel Boost Active: [Type: ${component}] [Schema: ${hasSchema ? "LOADED" : "EMPTY"}]`;
       break;
 
     case "ai_thinking":
@@ -185,15 +190,44 @@ function handleEvent(evt) {
       break;
 
     case "error":
-      log("err", `❌ Error: ${data.msg}`);
-      resetBtn();
-      eventSource?.close();
+      log("err", `❌ ${data.msg}`);
+      // Show a persistent banner so errors can't be missed
+      showErrorBanner(data.msg);
       break;
   }
 }
 
+function showErrorBanner(message) {
+  // Remove any existing banner first
+  const existing = document.getElementById("error-banner");
+  if (existing) existing.remove();
+
+  const banner = document.createElement("div");
+  banner.id = "error-banner";
+  banner.style.cssText = `
+    position: sticky; top: 0; z-index: 999;
+    background: linear-gradient(135deg, #dc2626, #991b1b);
+    color: #fff; padding: 12px 16px; border-radius: 8px;
+    margin: 8px; font-weight: 600; font-size: 14px;
+    box-shadow: 0 4px 20px rgba(220,38,38,0.4);
+    display: flex; align-items: center; gap: 8px;
+    animation: shake 0.5s ease-in-out;
+  `;
+  banner.innerHTML = `
+    <span style="font-size:18px">🚨</span>
+    <span style="flex:1">${escHtml(message)}</span>
+    <button onclick="this.parentElement.remove()" style="
+      background:rgba(255,255,255,0.2); border:none; color:#fff;
+      padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px;
+    ">✕</button>
+  `;
+  const logPanel = document.getElementById("log-output");
+  logPanel.prepend(banner);
+}
+
 // ── Handle Completion ───────────────────────────────────────────────────────────
 function handleComplete(data) {
+  completedReceived = true;
   eventSource?.close();
   resetBtn();
 
@@ -206,7 +240,7 @@ function handleComplete(data) {
   } else {
     log("err", `😞 FAILED after ${data.iterations} iterations. ${data.message || ""}`);
     document.getElementById("diff-container").innerHTML =
-      '<div class="result-placeholder" style="color:var(--red)">Repair failed. See logs for details.</div>';
+      '<div class="result-placeholder" style="color:var(--red)">Repair failed. See logs above for the error details.</div>';
     loadHistory();
   }
 }
@@ -298,12 +332,86 @@ async function loadHistory() {
     const el = document.getElementById("history-entries");
     if (!items.length) { el.textContent = "No history yet."; return; }
     el.innerHTML = items.map(item => `
-      <div class="iter-card ${item.status}">
+      <div class="iter-card ${item.status}" style="cursor: pointer;" onclick="loadPastSubmission('${item.id}')">
         <span class="iter-num">${item.status === "success" ? "✅" : "❌"}</span>
         ${item.id.slice(0, 8)}… · ${item.total_iterations} iter
         <br><small style="color:var(--text-dim)">${new Date(item.created_at).toLocaleString()}</small>
       </div>`).join("");
   } catch { /* silent */ }
+}
+
+async function loadPastSubmission(id) {
+  try {
+    log("info", `Fetching historical job ${id}...`);
+    const res = await fetch(`${API_BASE}/api/history/${id}`);
+    if (!res.ok) throw new Error("Could not load past run");
+    const data = await res.json();
+    
+    // Set Editor
+    editor.setValue(data.original_code);
+    originalCode = data.original_code;
+    
+    // Update Result Panel
+    if (data.status === "success" && data.final_code) {
+      repairedCode = data.final_code;
+      renderDiff(data.original_code, data.final_code);
+      document.getElementById("btn-download").disabled = false;
+      log("ok", `Loaded past successful run (${data.total_iterations} iterations).`);
+    } else {
+      document.getElementById("diff-container").innerHTML =
+        '<div class="result-placeholder" style="color:var(--err-color)">Run failed or did not complete.</div>';
+      document.getElementById("btn-download").disabled = true;
+      log("err", "Loaded past failed run.");
+    }
+    
+    // Update Iteration History List
+    const list = document.getElementById("history-list");
+    list.innerHTML = "";
+    if (data.iterations && data.iterations.length > 0) {
+      data.iterations.forEach(it => {
+        // Extract fix description from the raw AI response JSON if available
+        let fixDesc = "patch applied";
+        if (it.ai_response) {
+          try {
+            const aiData = JSON.parse(it.ai_response);
+            fixDesc = aiData.fix_description || fixDesc;
+          } catch { /* raw text, not JSON */ }
+        }
+        const card = document.createElement("div");
+        card.className = "iter-card";
+        card.innerHTML = `<span class="iter-num">#${it.iteration_num}</span> — ${escHtml(fixDesc)}`;
+        list.appendChild(card);
+      });
+
+      // Boost Context — pull from the first iteration that has it
+      const boostIter = data.iterations.find(it => it.boost_context);
+      if (boostIter && boostIter.boost_context) {
+        try {
+          const boostData = JSON.parse(boostIter.boost_context);
+          const parts = [];
+          if (boostData.component_type && boostData.component_type !== "unknown") {
+            parts.push(`Component: ${boostData.component_type}`);
+          }
+          if (boostData.schema_info && boostData.schema_info !== "No schema info available.") {
+            parts.push(`Schema: ✓`);
+          }
+          if (boostData.docs_excerpts && boostData.docs_excerpts.length > 0) {
+            parts.push(`Docs: ${boostData.docs_excerpts.length} excerpt(s)`);
+          }
+          document.getElementById("boost-content").textContent = parts.length > 0
+            ? parts.join(" | ")
+            : "Boost returned empty context.";
+        } catch {
+          document.getElementById("boost-content").textContent = boostIter.boost_context;
+        }
+      } else {
+        document.getElementById("boost-content").textContent = "No Boost context was used.";
+      }
+    }
+    
+  } catch (err) {
+    log("err", err.message);
+  }
 }
 
 // ── Reset Button ──────────────────────────────────────────────────────────────────
