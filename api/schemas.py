@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 class RepairRequest(BaseModel):
     code: str = Field(..., description="The broken PHP/Laravel code to repair")
     max_iterations: Optional[int] = Field(None, ge=1, le=10)
+    use_boost: Optional[bool] = Field(True, description="Whether to fetch context from Laravel Boost")
+    use_mutation_gate: Optional[bool] = Field(True, description="Whether to run mutation tests")
 
     @field_validator("code")
     @classmethod
@@ -31,6 +33,8 @@ class IterationOut(BaseModel):
     status: str
     error_logs: Optional[str] = None
     patch_applied: Optional[str] = None
+    ai_response: Optional[str] = None
+    boost_context: Optional[str] = None
     pest_test_result: Optional[str] = None
     mutation_score: Optional[float] = None
     duration_ms: Optional[int] = None
@@ -43,8 +47,12 @@ class SubmissionOut(BaseModel):
     status: str
     created_at: datetime
     total_iterations: int
+    original_code: str
     final_code: Optional[str] = None
     error_summary: Optional[str] = None
+    case_id: Optional[str] = None
+    category: Optional[str] = None
+    experiment_id: Optional[str] = None
     iterations: list[IterationOut] = []
     model_config = {"from_attributes": True}
 
@@ -55,6 +63,9 @@ class HistoryItem(BaseModel):
     created_at: datetime
     total_iterations: int
     error_summary: Optional[str] = None
+    case_id: Optional[str] = None
+    category: Optional[str] = None
+    experiment_id: Optional[str] = None
     model_config = {"from_attributes": True}
 
 

@@ -44,7 +44,7 @@ Return ONLY valid JSON — no markdown, no prose before or after. Exactly this s
     "replacement": "the new code string (for create_file, the FULL PHP class code)",
     "filename": "path/to/file.php (required ONLY when action=create_file)"
   },
-  "pest_test": "<?php\nuse function Pest\\Laravel\\...;\n\ntest('repaired code behaves correctly', function() {\n    // test body here\n});"
+  "pest_test": "<?php\nuse function Pest\\Laravel\\...;\nuse App\\Http\\Controllers\\Api\\StatusController; // Example\n\n// IMPORTANT: Pest 3 mutation testing REQUIRES covers() or mutates()\ncovers(StatusController::class);\n\ntest('repaired code behaves correctly', function() {\n    // test body here\n});"
 }
 
 Allowed patch actions:

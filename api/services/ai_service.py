@@ -71,14 +71,16 @@ def _build_prompt(
 
 
 def _fix_json_escapes(text: str) -> str:
-    """
+    r"""
     Gemini (and other models) sometimes embed PHP namespace strings like
     App\Http\Controllers inside JSON without double-escaping the backslash.
     This pre-processes the raw JSON string to fix invalid \escape sequences
     before parsing, replacing lone backslashes with \\.
     Only fixes backslashes NOT followed by valid JSON escape characters.
     """
-    return re.sub(r'\\(?!["\\/.bfnrtu])', r'\\\\', text)
+    # Use a lambda to avoid any re.sub template string quirky parsing, 
+    # and remove '.' since \. is not a valid JSON escape
+    return re.sub(r'\\(?![\\"/bfnrtu])', lambda m: '\\\\', text)
 
 
 def _parse_response(raw: str) -> AIRepairResponse:
@@ -168,6 +170,42 @@ async def _call_gemini(prompt: str) -> str:
     return resp.choices[0].message.content
 
 
+async def _call_qwen(prompt: str) -> str:
+    """Alibaba Qwen via DashScope — 1M free tokens, OpenAI-compatible.
+    Get key at: https://bailian.console.aliyun.com/
+    Models: qwen3-max, qwen-plus-2025-07-28, qwen3.5-122b-a10b
+    """
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(
+        api_key=settings.dashscope_api_key,
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+    )
+    resp = await client.chat.completions.create(
+        model=settings.ai_model or "qwen3-max",
+        temperature=settings.ai_temperature,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.choices[0].message.content
+
+
+async def _call_cerebras(prompt: str) -> str:
+    """Cerebras — blazing fast inference (1000+ tok/s), OpenAI-compatible.
+    Get key at: https://cloud.cerebras.ai
+    Models: llama-3.3-70b, llama-3.1-8b
+    """
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(
+        api_key=settings.cerebras_api_key,
+        base_url="https://api.cerebras.ai/v1",
+    )
+    resp = await client.chat.completions.create(
+        model=settings.ai_model or "llama-3.3-70b",
+        temperature=settings.ai_temperature,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.choices[0].message.content
+
+
 async def _call_deepseek(prompt: str) -> str:
     """DeepSeek — near-free, best code model available.
     Get key at: https://platform.deepseek.com
@@ -207,7 +245,9 @@ async def _call_llm(prompt: str) -> str:
     """Route to the configured AI provider."""
     provider = settings.default_ai_provider.lower()
     dispatch = {
-        "gemini":    _call_gemini,      # Free — recommended
+        "qwen":      _call_qwen,        # Free 1M tokens — recommended
+        "cerebras":  _call_cerebras,    # Blazing fast, generous limits
+        "gemini":    _call_gemini,      # Free tier (rate-limited)
         "groq":      _call_groq,        # Free tier
         "deepseek":  _call_deepseek,    # Near-free, best code model
         "ollama":    _call_ollama,       # Local, no key needed

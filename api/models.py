@@ -25,6 +25,7 @@ class Submission(Base):
     __tablename__ = "submissions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
     original_code: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(
@@ -33,6 +34,11 @@ class Submission(Base):
     total_iterations: Mapped[int] = mapped_column(Integer, default=0)
     final_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Research Metadata
+    case_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    experiment_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     iterations: Mapped[list["Iteration"]] = relationship(
         "Iteration", back_populates="submission", cascade="all, delete-orphan"
