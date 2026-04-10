@@ -12,7 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.config import get_settings
 from api.database import create_tables
-from api.routers import health, repair, history, evaluate
+from api.routers.health import router as health_router
+from api.routers.repair import router as repair_router
+from api.routers.history import router as history_router
+from api.routers.evaluate import router as evaluate_router
+from api.routers.stats import router as stats_router
+from api.routers.admin import router as admin_router
 
 settings = get_settings()
 
@@ -52,10 +57,12 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────────────────
-app.include_router(health.router)
-app.include_router(repair.router)
-app.include_router(history.router)
-app.include_router(evaluate.router)
+app.include_router(health_router)
+app.include_router(repair_router)
+app.include_router(history_router)
+app.include_router(evaluate_router)
+app.include_router(stats_router)
+app.include_router(admin_router)
 
 
 @app.get("/", include_in_schema=False)

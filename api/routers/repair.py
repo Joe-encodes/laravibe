@@ -63,6 +63,8 @@ async def submit_repair(
         submission_id=submission_id,
         code=request.code,
         max_iterations=request.max_iterations,
+        use_boost=request.use_boost,
+        use_mutation_gate=request.use_mutation_gate,
     )
 
     return RepairSubmitResponse(submission_id=submission_id)
@@ -72,6 +74,8 @@ async def _run_repair_background(
     submission_id: str,
     code: str,
     max_iterations: int | None,
+    use_boost: bool,
+    use_mutation_gate: bool,
 ) -> None:
     """Background task: runs the repair loop and pushes events to the SSE queue."""
     from api.database import AsyncSessionLocal
@@ -81,6 +85,8 @@ async def _run_repair_background(
             code=code,
             db=db,
             max_iterations=max_iterations,
+            use_boost=use_boost,
+            use_mutation_gate=use_mutation_gate,
         ):
             _event_queues.setdefault(submission_id, []).append(event)
     _repair_done[submission_id] = True

@@ -36,7 +36,8 @@ async def health_check() -> HealthResponse:
     from api.config import get_settings
     settings = get_settings()
     ai_status = "key_set" if (
-        settings.anthropic_api_key or settings.openai_api_key or settings.groq_api_key
+        settings.anthropic_api_key or settings.openai_api_key or settings.groq_api_key or 
+        settings.dashscope_api_key or settings.cerebras_api_key or settings.gemini_api_key
     ) else "no_key_configured"
 
     return HealthResponse(
