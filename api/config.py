@@ -15,17 +15,19 @@ class Settings(BaseSettings):
     )
 
     # ── AI Provider ──────────────────────────────────────────────────────────
-    # Free providers
-    gemini_api_key: str = ""                 # aistudio.google.com — genuinely free
+    # Free providers (recommended)
+    dashscope_api_key: str = ""              # bailian.console.aliyun.com — 1M free tokens
+    cerebras_api_key: str = ""               # cloud.cerebras.ai — blazing fast
+    gemini_api_key: str = ""                 # aistudio.google.com — free (rate-limited)
     groq_api_key: str = ""                   # console.groq.com — free tier
     deepseek_api_key: str = ""              # platform.deepseek.com — near-free
     ollama_base_url: str = "http://localhost:11434"  # local, no key needed
     # Paid providers
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    # Active provider: gemini | groq | deepseek | ollama | anthropic | openai
-    default_ai_provider: str = "gemini"
-    ai_model: str = "gemini-2.5-flash"
+    # Active provider: qwen | cerebras | gemini | groq | deepseek | ollama | anthropic | openai
+    default_ai_provider: str = "qwen"
+    ai_model: str = "qwen3-max"
     ai_temperature: float = 0.0              # deterministic for reproducibility
 
     # ── Docker ───────────────────────────────────────────────────────────────
@@ -33,8 +35,8 @@ class Settings(BaseSettings):
     docker_network: str = "repair-net"
     container_memory_limit: str = "512m"
     container_cpu_limit: float = 0.5
-    container_pid_limit: int = 64
-    container_timeout_seconds: int = 90
+    container_pid_limit: int = 256            # tinker + composer need many child processes
+    container_timeout_seconds: int = 180      # WSL filesystem is slow for composer ops
     max_iterations: int = 7
 
     # ── App ───────────────────────────────────────────────────────────────────

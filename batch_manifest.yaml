@@ -5,8 +5,8 @@
 project_name: laravel-ai-repair
 php_version: "8.3"
 laravel_version: "12.*"
-ai_provider: anthropic          # anthropic | openai
-ai_model: claude-sonnet-4-6
+ai_provider: qwen              # anthropic | openai | qwen | cerebras
+ai_model: qwen3-max
 ai_temperature: 0.0             # deterministic for reproducibility
 max_iterations: 7
 mutation_score_threshold: 80    # pest --mutate must score >= 80%
@@ -15,8 +15,8 @@ batch_size: 10
 resource_limits:
   cpus: "0.5"
   memory: 512m
-  pids: 64
-  timeout_s: 90
+  pids: 256
+  timeout_s: 180
 
 # Ablation flags (set one to false to run without that feature)
 use_boost_context: true
