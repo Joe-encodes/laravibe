@@ -6,7 +6,7 @@ from typing import List
 from api.database import get_db
 from api.models import Submission
 
-router = APIRouter(prefix="/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.get("/training-dataset")
 async def get_training_dataset(

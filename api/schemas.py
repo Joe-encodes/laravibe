@@ -33,8 +33,9 @@ class IterationOut(BaseModel):
     status: str
     error_logs: Optional[str] = None
     patch_applied: Optional[str] = None
+    ai_prompt: Optional[str] = None
     ai_response: Optional[str] = None
-    boost_context: Optional[str] = None
+    pest_test_code: Optional[str] = None
     pest_test_result: Optional[str] = None
     mutation_score: Optional[float] = None
     duration_ms: Optional[int] = None

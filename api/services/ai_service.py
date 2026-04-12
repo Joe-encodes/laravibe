@@ -39,6 +39,7 @@ class AIRepairResponse:
     patch: PatchSpec
     pest_test: str
     raw: str             # original JSON string for DB storage
+    prompt: str          # full system prompt used for this request
 
 
 class AIServiceError(Exception):
@@ -111,6 +112,7 @@ def _parse_response(raw: str) -> AIRepairResponse:
         patch=patch,
         pest_test=data.get("pest_test", ""),
         raw=raw,
+        prompt="", # Initialized in get_repair
     )
 
 
@@ -289,7 +291,10 @@ async def get_repair(
         raw = await _call_llm(prompt)
         if settings.debug:
             logger.debug(f"[AI] RESPONSE:\n{raw[:500]}...")
-        return _parse_response(raw)
+        
+        resp = _parse_response(raw)
+        resp.prompt = prompt
+        return resp
     except (ValueError, json.JSONDecodeError) as exc:
         logger.warning(f"[AI] Bad JSON on iteration {iteration}, retrying... ({exc})")
         raise

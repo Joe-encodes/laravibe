@@ -56,6 +56,8 @@ async def run_repair_loop(
     # every fresh container. Without this, the AI's fix (e.g. a new Model file)
     # gets written to a container and immediately lost when that container is destroyed.
     supplementary_files: dict[str, str] = {}  # {relative_path: file_content}
+    current_pest_test: str | None = None
+
 
     # Mark submission as running
     submission = await db.get(Submission, submission_id)
@@ -94,12 +96,25 @@ async def run_repair_loop(
                         f"cat > '{abs_path}' << 'INJECT_EOF'\n{file_content}\nINJECT_EOF"
                     )
                     await docker_service.execute(container, inject_cmd, timeout=15)
+                
                 # Refresh autoloader after injecting all supplementary files
                 await docker_service.execute(
                     container,
                     "cd /var/www/sandbox && composer dump-autoload -q 2>&1",
                     timeout=30,
                 )
+
+            # ── 2d. Inject the current Pest test file ─────────────────────────
+            # AI generates a test to verify the fix; we must write it so Pest can find it.
+            if current_pest_test:
+                yield _evt("log_line", msg="🧪 Injecting AI-generated Pest test suite...")
+                test_path = "/var/www/sandbox/tests/Feature/RepairTest.php"
+                # Use a heredoc to safely write the PHP test file
+                write_test_cmd = (
+                    f"mkdir -p \"$(dirname '{test_path}')\" && "
+                    f"cat > '{test_path}' << 'TEST_EOF'\n{current_pest_test}\nTEST_EOF"
+                )
+                await docker_service.execute(container, write_test_cmd, timeout=15)
 
             # ── 2c. Configure sandbox DB as SQLite for Boost context ──────────
             # The container runs with --network=none, so MySQL/Redis are
@@ -250,6 +265,7 @@ php artisan tinker --execute="
                             threshold=settings.mutation_score_threshold,
                             passed=is_genuine_success,
                             output=mut_result.stdout[:1000],
+                            duration_ms=mut_result.duration_ms,
                         )
                     else:
                         yield _evt("log_line", msg="⏩ Mutation gate disabled (ablation mode).")
@@ -284,7 +300,7 @@ php artisan tinker --execute="
                         yield _evt("log_line", msg=f"⚠️ Mutation score too low ({mutation_score:.1f}%). Strengthening fix...")
                 else:
                     error_text = pest_result.stdout + pest_result.stderr
-                    yield _evt("pest_result", status="fail", output=error_text[:2000])
+                    yield _evt("pest_result", status="fail", output=error_text[:2000], duration_ms=pest_result.duration_ms)
                     yield _evt("log_line", msg="❌ Pest test failed. Requesting AI fix...")
             else:
                 error_text = exec_result.stderr + exec_result.stdout
@@ -368,6 +384,17 @@ cd /var/www/sandbox && composer dump-autoload -q 2>&1
                     # Do NOT change current_code — we are adding a dependency
                 else:
                     current_code = new_code_or_file
+                
+                # Capture the new Pest test for the next iteration (or current mutation gate)
+                if ai_resp.pest_test:
+                    current_pest_test = ai_resp.pest_test
+                    # We also write it immediately if the container is still alive for the mutation gate
+                    test_path = "/var/www/sandbox/tests/Feature/RepairTest.php"
+                    write_test_cmd = (
+                        f"mkdir -p \"$(dirname '{test_path}')\" && "
+                        f"cat > '{test_path}' << 'TEST_EOF'\n{current_pest_test}\nTEST_EOF"
+                    )
+                    await docker_service.execute(container, write_test_cmd, timeout=15)
                     
                 yield _evt("patch_applied",
                     action=ai_resp.patch.action,
@@ -390,7 +417,7 @@ cd /var/www/sandbox && composer dump-autoload -q 2>&1
                 current_code, exec_result, None, None, "failed",
                 int((time.monotonic() - iter_start) * 1000),
                 boost_ctx_json=boost_ctx_json,
-                ai_prompt=None, ai_response=ai_resp.raw,
+                ai_prompt=ai_resp.prompt, ai_response=ai_resp.raw,
                 patch_applied=str(ai_resp.patch),
                 pest_test_code=ai_resp.pest_test,
                 error_logs=error_text,

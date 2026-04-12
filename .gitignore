@@ -25,3 +25,20 @@ __pycache__/
 
 .agents
 .env
+
+# AI Session Data
+.claude/
+
+# Internal Data Storage
+/data/
+
+# Frontend (LaraVibe-FE)
+laravibe-fe/node_modules/
+laravibe-fe/dist/
+laravibe-fe/.env.local
+laravibe-fe/.env.development.local
+laravibe-fe/.env.test.local
+laravibe-fe/.env.production.local
+laravibe-fe/npm-debug.log*
+laravibe-fe/yarn-debug.log*
+laravibe-fe/yarn-error.log*
