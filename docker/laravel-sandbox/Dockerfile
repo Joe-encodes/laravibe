@@ -84,6 +84,8 @@ RUN addgroup -S sandbox && adduser -S -G sandbox sandbox \
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh \
     && php artisan vendor:publish --tag=boost-config --force 2>/dev/null || true \
+    && php artisan boost:install --skill=rest-api --skill=pest-api --force 2>/dev/null || true \
     && php artisan optimize 2>/dev/null || true
+
 
 ENTRYPOINT ["/entrypoint.sh"]

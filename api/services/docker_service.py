@@ -32,6 +32,10 @@ class ExecResult:
     duration_ms: int
 
     @property
+    def is_timeout(self) -> bool:
+        return self.exit_code == 124
+
+    @property
     def has_php_fatal(self) -> bool:
         """PHP fatal errors don't always produce non-zero exit codes — check text too."""
         combined = (self.stdout + self.stderr).lower()
@@ -43,17 +47,43 @@ class ExecResult:
 
 def _get_client() -> docker.DockerClient:
     """Return a Docker client. Raises DockerException if daemon unreachable."""
-    return docker.from_env(timeout=30)
+    return docker.from_env(timeout=60)
 
 
-async def health_check() -> bool:
-    """Return True if Docker daemon is reachable."""
+async def is_alive(container) -> bool:
+    """Check if container is still running and healthy."""
     loop = asyncio.get_event_loop()
-    try:
-        await loop.run_in_executor(None, lambda: _get_client().ping())
-        return True
-    except DockerException:
-        return False
+
+    def _check():
+        try:
+            container.reload()  # refresh container state
+            return container.status == "running"
+        except Exception:
+            return False
+
+    return await loop.run_in_executor(None, _check)
+
+
+async def ping(container, retries: int = 3) -> bool:
+    """
+    Run a fast no-op command to ensure the container is responsive.
+    Retries multiple times as WSL/Docker cold starts can be slow.
+    """
+    for attempt in range(retries):
+        try:
+            # Run 'php -v' as a health check with a more lenient 15s timeout
+            result = await execute(container, "php -v", timeout=15)
+            if result.exit_code == 0:
+                if attempt > 0:
+                    logger.info(f"[{container.short_id}] Sandbox responded on attempt {attempt + 1}")
+                return True
+        except Exception as e:
+            logger.warning(f"[{container.short_id}] Ping attempt {attempt + 1} failed: {e}")
+        
+        if attempt < retries - 1:
+            await asyncio.sleep(1) # short breather before retry
+
+    return False
 
 
 async def create_container() -> docker.models.containers.Container:
@@ -94,22 +124,33 @@ async def create_container() -> docker.models.containers.Container:
 
 async def copy_code(container, code: str) -> None:
     """Write `code` to /submitted/code.php inside the running container."""
+    await copy_file(container, "/submitted/code.php", code)
+
+
+async def copy_file(container, dest_path: str, content: str) -> None:
+    """Write `content` to `dest_path` inside the running container."""
     loop = asyncio.get_event_loop()
 
     def _copy():
-        # Build an in-memory tar archive containing code.php
-        code_bytes = code.encode("utf-8")
+        import pathlib
+        # Build an in-memory tar archive
+        content_bytes = content.encode("utf-8")
         tar_buffer = io.BytesIO()
+        filename = pathlib.Path(dest_path).name
+        
         with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
-            info = tarfile.TarInfo(name="code.php")
-            info.size = len(code_bytes)
-            tar.addfile(info, io.BytesIO(code_bytes))
+            info = tarfile.TarInfo(name=filename)
+            info.size = len(content_bytes)
+            tar.addfile(info, io.BytesIO(content_bytes))
         tar_buffer.seek(0)
 
-        # Create /submitted/ directory and put the archive there
-        container.exec_run("mkdir -p /submitted", user="root")
-        container.put_archive("/submitted", tar_buffer.getvalue())
-        logger.debug(f"[{container.short_id}] Code copied to /submitted/code.php")
+        # Ensure directory exists
+        dest_dir = str(pathlib.Path(dest_path).parent)
+        container.exec_run(f"mkdir -p {dest_dir}", user="root")
+        
+        # put_archive needs the target directory
+        container.put_archive(dest_dir, tar_buffer.getvalue())
+        logger.debug(f"[{container.short_id}] File copied to {dest_path}")
 
     await loop.run_in_executor(None, _copy)
 
@@ -151,12 +192,34 @@ async def execute(
         )
     except asyncio.TimeoutError:
         logger.warning(f"[{container.short_id}] Command timed out after {timeout}s: {command}")
-        await loop.run_in_executor(None, lambda: container.stop(timeout=2))
+
+        # Check if container is still alive before stopping it
+        if await is_alive(container):
+            logger.info(f"[{container.short_id}] Container still alive after timeout - keeping it running for next command")
+            return ExecResult(
+                stdout="",
+                stderr=f"[TIMEOUT] Command exceeded {timeout}s limit but container remains healthy.",
+                exit_code=124,
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        else:
+            logger.warning(f"[{container.short_id}] Container is NOT alive after timeout - reporting as crash")
+            return ExecResult(
+                stdout="",
+                stderr="[CRASH] The container stopped or died during command execution.",
+                exit_code=137, # Standard Docker exit code for SIGKILL/Death
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+    except Exception as exc:
+        # Catch requests.exceptions.ReadTimeout or other Docker SDK issues
+        duration_ms = int((time.monotonic() - start) * 1000)
+        err_msg = f"Docker engine error: {exc}"
+        logger.error(f"[{container.short_id}] {err_msg} (after {duration_ms}ms)")
         return ExecResult(
             stdout="",
-            stderr=f"[TIMEOUT] Command exceeded {timeout}s limit.",
-            exit_code=124,
-            duration_ms=int((time.monotonic() - start) * 1000),
+            stderr=f"[SYSTEM_ERROR] {err_msg}",
+            exit_code=500,  # Generic internal error code
+            duration_ms=duration_ms,
         )
 
     duration_ms = int((time.monotonic() - start) * 1000)

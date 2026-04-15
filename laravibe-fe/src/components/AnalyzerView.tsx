@@ -7,16 +7,27 @@ export const AnalyzerView: React.FC = () => {
   const navigate = useNavigate();
   const [code, setCode] = React.useState(INITIAL_PHP_CODE);
   const [maxIterations, setMaxIterations] = React.useState(7);
+  const [useBoost, setUseBoost] = React.useState(true);
+  const [useMutationGate, setUseMutationGate] = React.useState(true);
   const [isLoading, setIsLoading] = React.useState(false);
 
   const handleRepair = async () => {
     setIsLoading(true);
-    console.info('[LaraVibe] Initiating repair request...', { max_iterations: maxIterations });
+    console.info('[LaraVibe] Initiating repair request...', { 
+      max_iterations: maxIterations,
+      use_boost: useBoost,
+      use_mutation_gate: useMutationGate
+    });
     try {
       const response = await fetch('/api/repair', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, max_iterations: maxIterations })
+        body: JSON.stringify({ 
+          code, 
+          max_iterations: maxIterations,
+          use_boost: useBoost,
+          use_mutation_gate: useMutationGate
+        })
       });
       console.info('[LaraVibe] Backend Response:', { status: response.status, ok: response.ok });
       if (!response.ok) throw new Error('API Request Failed');
@@ -49,20 +60,34 @@ export const AnalyzerView: React.FC = () => {
             spellCheck="false"
           />
         </div>
-        <div className="h-14 px-4 flex items-center justify-between border-t border-outline-variant bg-surface-container-low">
-          <div className="flex items-center gap-3">
-            <label className="mono text-[10px] font-bold text-on-surface-variant">MAX ITERATIONS</label>
-            <input 
-              className="w-12 h-8 bg-surface-container-highest border-b-2 border-outline-variant text-center mono text-sm focus:border-primary outline-none transition-colors" 
-              type="number" 
-              value={maxIterations}
-              onChange={(e) => setMaxIterations(Number(e.target.value))}
-            />
+        <div className="h-24 px-4 flex flex-col justify-center gap-3 border-t border-outline-variant bg-surface-container-low">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <label className="mono text-[10px] font-bold text-on-surface-variant">MAX ITERATIONS</label>
+              <input 
+                className="w-12 h-8 bg-surface-container-highest border-b-2 border-outline-variant text-center mono text-sm focus:border-primary outline-none transition-colors" 
+                type="number" 
+                value={maxIterations}
+                onChange={(e) => setMaxIterations(Number(e.target.value))}
+              />
+            </div>
+            
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <span className="mono text-[8px] font-bold text-on-surface-variant group-hover:text-primary transition-colors uppercase">Boost</span>
+                <input type="checkbox" checked={useBoost} onChange={e => setUseBoost(e.target.checked)} className="accent-primary" />
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer group">
+                <span className="mono text-[8px] font-bold text-on-surface-variant group-hover:text-secondary transition-colors uppercase">Mutate</span>
+                <input type="checkbox" checked={useMutationGate} onChange={e => setUseMutationGate(e.target.checked)} className="accent-secondary" />
+              </label>
+            </div>
           </div>
+          
           <button 
             onClick={handleRepair}
             disabled={isLoading}
-            className="bg-[#6366F1] hover:bg-[#5254d8] disabled:opacity-50 text-white px-4 py-2 rounded-md mono text-xs font-bold tracking-tighter flex items-center gap-2 active:scale-95 transition-all"
+            className="w-full bg-[#6366F1] hover:bg-[#5254d8] disabled:opacity-50 text-white py-2 rounded-md mono text-xs font-bold tracking-tighter flex items-center justify-center gap-2 active:scale-95 transition-all shadow-lg shadow-indigo-500/20"
           >
             <Wrench className="w-4 h-4" />
             {isLoading ? 'SUBMITTING...' : 'REPAIR CODE'}

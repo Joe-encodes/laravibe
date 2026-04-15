@@ -32,6 +32,7 @@ def _make_ai_resp(action="replace", target="<?php", diagnosis="missing import"):
         patch=PatchSpec(action=action, target=target, replacement="<?php\nuse App\\Models\\Product;", filename=None),
         pest_test="it('works', fn() => expect(true)->toBeTrue());",
         raw=json.dumps({"diagnosis": diagnosis, "fix_description": "fix", "patch": {}, "pest_test": ""}),
+        prompt="system prompt",
     )
 
 
@@ -89,6 +90,7 @@ class TestRepairLoopSuccess:
         #   4. artisan tinker setup+class check  (stdout: CLASS_OK)
         #   5. pest --filter=RepairTest
         #   6. pest --mutate
+        db_ok    = _make_exec(stdout="Migrated", exit_code=0)
         lint_ok  = _make_exec(stdout="No syntax errors detected", exit_code=0)
         ns_ok    = _make_exec(stdout="App/Http/Controllers", exit_code=0)
         cls_ok   = _make_exec(stdout="TestClass", exit_code=0)
@@ -98,9 +100,10 @@ class TestRepairLoopSuccess:
 
         with (
             patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
+            patch("api.services.repair_service.docker_service.ping", AsyncMock(return_value=True)),
             patch("api.services.repair_service.docker_service.copy_code", AsyncMock()),
             patch("api.services.repair_service.docker_service.execute",
-                  AsyncMock(side_effect=[lint_ok, ns_ok, cls_ok, tinker_ok, pest_ok, mut_ok])),
+                  AsyncMock(side_effect=[db_ok, lint_ok, ns_ok, cls_ok, tinker_ok, pest_ok, mut_ok])),
             patch("api.services.repair_service.docker_service.destroy", AsyncMock()),
             patch("api.services.repair_service.boost_service.query_context",
                   AsyncMock(return_value=json.dumps({"schema_info": "", "docs_excerpts": [], "component_type": "unknown"}))),
@@ -121,10 +124,12 @@ class TestRepairLoopFailed:
         ai_resp = _make_ai_resp()
         boost_ctx = json.dumps({"schema_info": "", "docs_excerpts": [], "component_type": "model"})
 
+        db_ok = _make_exec(stdout="Migrated", exit_code=0)
         with (
             patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
+            patch("api.services.repair_service.docker_service.ping", AsyncMock(return_value=True)),
             patch("api.services.repair_service.docker_service.copy_code", AsyncMock()),
-            patch("api.services.repair_service.docker_service.execute", AsyncMock(return_value=err_exec)),
+            patch("api.services.repair_service.docker_service.execute", AsyncMock(side_effect=[db_ok, err_exec, db_ok, err_exec])),
             patch("api.services.repair_service.docker_service.destroy", AsyncMock()),
             patch("api.services.repair_service.boost_service.query_context", AsyncMock(return_value=boost_ctx)),
             patch("api.services.repair_service.ai_service.get_repair", AsyncMock(return_value=ai_resp)),
@@ -156,9 +161,12 @@ class TestRepairLoopMutationWeak:
         boost_ctx = json.dumps({"schema_info": "", "docs_excerpts": [], "component_type": "unknown"})
 
         # Sequence: iter1 full flow (6 calls) + iter2 lint fail (1 call) + padding
-        call_sequence = [lint_ok, ns_ok, cls_ok, tinker_ok, pest_ok, mut_weak, err_exec]
+        db_ok = _make_exec(stdout="Migrated", exit_code=0)
+        # Sequence: iter1 (db_setup + lint + ns + cls + tinker + pest + mutate) + iter2 (db_setup + lint_fail)
+        call_sequence = [db_ok, lint_ok, ns_ok, cls_ok, tinker_ok, pest_ok, mut_weak, db_ok, err_exec]
         with (
             patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
+            patch("api.services.repair_service.docker_service.ping", AsyncMock(return_value=True)),
             patch("api.services.repair_service.docker_service.copy_code", AsyncMock()),
             patch("api.services.repair_service.docker_service.execute",
                   AsyncMock(side_effect=call_sequence + [err_exec] * 20)),

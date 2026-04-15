@@ -18,10 +18,11 @@ from api.config import get_settings
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
-# Load prompt template once at import time
+# Load prompt templates once at import time
 import pathlib
-_PROMPT_PATH = pathlib.Path(__file__).parent.parent / "prompts" / "repair_prompt.txt"
-_REPAIR_PROMPT_TEMPLATE = _PROMPT_PATH.read_text(encoding="utf-8")
+_PROMPTS_DIR = pathlib.Path(__file__).parent.parent / "prompts"
+_REPAIR_PROMPT_TEMPLATE = (_PROMPTS_DIR / "repair_prompt.txt").read_text(encoding="utf-8")
+_PEST_PROMPT_TEMPLATE = (_PROMPTS_DIR / "pest_prompt.txt").read_text(encoding="utf-8")
 
 
 @dataclass
@@ -68,7 +69,9 @@ def _build_prompt(
         .replace("{error}", error)
         .replace("{boost_context}", boost_context or "No Boost context available.")
         .replace("{previous_attempts}", prev)
+        .replace("{pest_template}", _PEST_PROMPT_TEMPLATE)
     )
+
 
 
 def _fix_json_escapes(text: str) -> str:
@@ -116,11 +119,11 @@ def _parse_response(raw: str) -> AIRepairResponse:
     )
 
 
-async def _call_anthropic(prompt: str) -> str:
+async def _call_anthropic(prompt: str, model: str = None) -> str:
     import anthropic
     client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
     message = await client.messages.create(
-        model=settings.ai_model,
+        model=model or settings.ai_model,
         max_tokens=4096,
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
@@ -128,18 +131,18 @@ async def _call_anthropic(prompt: str) -> str:
     return message.content[0].text
 
 
-async def _call_openai(prompt: str) -> str:
+async def _call_openai(prompt: str, model: str = None) -> str:
     from openai import AsyncOpenAI
     client = AsyncOpenAI(api_key=settings.openai_api_key)
     resp = await client.chat.completions.create(
-        model="gpt-4o",
+        model=model or settings.ai_model or "gpt-4o",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_groq(prompt: str) -> str:
+async def _call_groq(prompt: str, model: str = None) -> str:
     """Groq — free tier, llama-3.3-70b or deepseek-r1."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
@@ -147,107 +150,176 @@ async def _call_groq(prompt: str) -> str:
         base_url="https://api.groq.com/openai/v1",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "llama-3.3-70b-versatile",
+        model=model or settings.ai_model or "llama-3.3-70b-versatile",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_gemini(prompt: str) -> str:
-    """Google Gemini — genuinely free at aistudio.google.com.
-    Uses the OpenAI-compatible endpoint (no extra SDK needed).
-    Get key at: https://aistudio.google.com/app/apikey
-    """
+async def _call_gemini(prompt: str, model: str = None) -> str:
+    """Google Gemini — genuinely free at aistudio.google.com."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
         api_key=settings.gemini_api_key,
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "gemini-2.5-flash",
+        model=model or settings.ai_model or "gemini-2.0-flash",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_qwen(prompt: str) -> str:
-    """Alibaba Qwen via DashScope — 1M free tokens, OpenAI-compatible.
-    Get key at: https://bailian.console.aliyun.com/
-    Models: qwen3-max, qwen-plus-2025-07-28, qwen3.5-122b-a10b
-    """
+async def _call_qwen(prompt: str, model: str = None) -> str:
+    """Alibaba Qwen via DashScope — 1M free tokens, OpenAI-compatible."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
         api_key=settings.dashscope_api_key,
         base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "qwen3-max",
+        model=model or settings.ai_model or "qwen3-max",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_cerebras(prompt: str) -> str:
-    """Cerebras — blazing fast inference (1000+ tok/s), OpenAI-compatible.
-    Get key at: https://cloud.cerebras.ai
-    Models: llama-3.3-70b, llama-3.1-8b
-    """
+async def _call_cerebras(prompt: str, model: str = None) -> str:
+    """Cerebras — blazing fast inference (1000+ tok/s)."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
         api_key=settings.cerebras_api_key,
         base_url="https://api.cerebras.ai/v1",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "llama-3.3-70b",
+        model=model or settings.ai_model or "llama-3.3-70b",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_deepseek(prompt: str) -> str:
-    """DeepSeek — near-free, best code model available.
-    Get key at: https://platform.deepseek.com
-    """
+async def _call_nvidia(prompt: str, model: str = None) -> str:
+    """NVIDIA NIM — high performance, OpenAI-compatible."""
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(
+        api_key=settings.nvidia_api_key,
+        base_url="https://integrate.api.nvidia.com/v1",
+    )
+    resp = await client.chat.completions.create(
+        model=model or settings.ai_model or "meta/llama-3.3-70b-instruct",
+        temperature=settings.ai_temperature,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return resp.choices[0].message.content
+
+
+async def _call_deepseek(prompt: str, model: str = None) -> str:
+    """DeepSeek — near-free, best code model available."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
         api_key=settings.deepseek_api_key,
         base_url="https://api.deepseek.com",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "deepseek-coder",
+        model=model or settings.ai_model or "deepseek-coder",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
 
 
-async def _call_ollama(prompt: str) -> str:
-    """Ollama — fully local, no API key needed.
-    Install: https://ollama.com  then run: ollama pull qwen2.5-coder:7b
-    Needs 8GB RAM minimum. Good models: qwen2.5-coder:7b, codellama:7b
-    """
+async def _call_ollama(prompt: str, model: str = None) -> str:
+    """Ollama — fully local, no API key needed."""
     from openai import AsyncOpenAI
     client = AsyncOpenAI(
-        api_key="ollama",          # Ollama ignores the key but the field is required
+        api_key="ollama",
         base_url=f"{settings.ollama_base_url}/v1",
     )
     resp = await client.chat.completions.create(
-        model=settings.ai_model or "qwen2.5-coder:7b",
+        model=model or settings.ai_model or "qwen2.5-coder:7b",
         temperature=settings.ai_temperature,
         messages=[{"role": "user", "content": prompt}],
     )
     return resp.choices[0].message.content
+
+
+async def _call_llm_with_fallback(prompt: str) -> str:
+    """Priority-based fallback mechanism for AI providers."""
+    # List of models to try in order of priority (NVIDIA & Alibaba first as per user request)
+    fallback_models = [
+        # 1-3. NVIDIA NIM (Primary Weight)
+        "nvidia_nim/meta/llama-3.3-70b-instruct",
+        "nvidia_nim/nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "nvidia_nim/deepseek-ai/deepseek-r1-distill-llama-70b",
+        
+        # 4-6. Alibaba DashScope (Primary Weight)
+        "dashscope/qwen3-max",
+        "dashscope/qwen3-coder",
+        "dashscope/qwen3-235b-a22b",
+        
+        # 7-8. Cerebras
+        "cerebras/llama-3.1-70b",
+        "cerebras/qwen-3-235b-a22b-instruct-2507",
+        
+        # 9-10. Groq
+        "groq/llama-3.3-70b-versatile",
+        "groq/llama-3.1-8b-instant",
+        
+        # 11. Gemini (Chill for now)
+        "gemini/gemini-3-flash-preview",
+    ]
+
+    dispatch = {
+        "nvidia_nim": _call_nvidia,
+        "dashscope":  _call_qwen,
+        "cerebras":   _call_cerebras,
+        "groq":       _call_groq,
+        "gemini":     _call_gemini,
+        "deepseek":   _call_deepseek,
+        "ollama":     _call_ollama,
+        "anthropic":  _call_anthropic,
+        "openai":     _call_openai,
+    }
+
+    last_error = None
+    for full_model_path in fallback_models:
+        try:
+            # Parse provider and model
+            if "/" not in full_model_path:
+                logger.warning(f"[AI] Invalid fallback model format: {full_model_path}")
+                continue
+                
+            provider_prefix, model_id = full_model_path.split("/", 1)
+            
+            if provider_prefix not in dispatch:
+                logger.warning(f"[AI] Unknown provider in fallback: {provider_prefix}")
+                continue
+
+            logger.info(f"[AI] Attempting fallback model: {full_model_path}")
+            return await dispatch[provider_prefix](prompt, model=model_id)
+            
+        except Exception as exc:
+            logger.warning(f"[AI] Fallback failed for {full_model_path}: {exc}")
+            last_error = exc
+            continue
+
+    raise AIServiceError(f"All AI fallback models failed. Last error: {last_error}")
 
 
 async def _call_llm(prompt: str) -> str:
     """Route to the configured AI provider."""
     provider = settings.default_ai_provider.lower()
+    
+    if provider == "fallback":
+        return await _call_llm_with_fallback(prompt)
+        
     dispatch = {
         "qwen":      _call_qwen,        # Free 1M tokens — recommended
+        "dashscope": _call_qwen,        # Alias
         "cerebras":  _call_cerebras,    # Blazing fast, generous limits
         "gemini":    _call_gemini,      # Free tier (rate-limited)
         "groq":      _call_groq,        # Free tier
@@ -255,6 +327,7 @@ async def _call_llm(prompt: str) -> str:
         "ollama":    _call_ollama,       # Local, no key needed
         "anthropic": _call_anthropic,   # Paid
         "openai":    _call_openai,      # Paid
+        "nvidia":    _call_nvidia,      # High performance
     }
     if provider not in dispatch:
         raise AIServiceError(

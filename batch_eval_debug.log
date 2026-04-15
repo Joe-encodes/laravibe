@@ -1,0 +1,28 @@
+[2026-04-13T00:14:38.841225+00:00] Starting batch evaluation batch-2026-04-13-001438
+[2026-04-13T00:14:38.941044+00:00] Loaded manifest with 5 cases
+[2026-04-13T00:14:38.978353+00:00] Error in batch evaluation batch-2026-04-13-001438: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+[2026-04-13T00:15:42.564199+00:00] Starting batch evaluation batch-2026-04-13-001542
+[2026-04-13T00:15:42.641940+00:00] Loaded manifest with 5 cases
+[2026-04-14T17:21:05.140268+00:00] Starting batch evaluation batch-2026-04-14-172104
+[2026-04-14T17:21:05.308560+00:00] Loaded manifest with 5 cases
+[2026-04-14T17:21:05.330977+00:00] Processing case case-001 (missing_model)
+[2026-04-14T17:22:08.994553+00:00] Starting batch evaluation batch-2026-04-14-172208
+[2026-04-14T17:22:09.307140+00:00] Loaded manifest with 5 cases
+[2026-04-14T17:22:09.654918+00:00] Processing case case-001 (missing_model)
+[2026-04-14T17:28:03.667835+00:00] Completed case case-001 with status: failed
+[2026-04-14T17:28:03.699525+00:00] Processing case case-002 (wrong_namespace)
+[2026-04-14T22:05:43.737789+00:00] Completed case case-001 with status: failed
+[2026-04-14T22:05:43.755613+00:00] Processing case case-002 (wrong_namespace)
+[2026-04-14T22:08:02.274891+00:00] Completed case case-002 with status: failed
+[2026-04-14T22:08:02.295264+00:00] Processing case case-003 (missing_import)
+[2026-04-14T22:08:27.988952+00:00] Completed case case-003 with status: failed
+[2026-04-14T22:08:28.038632+00:00] Completed batch evaluation batch-2026-04-14-172104: 0/5 success
+[2026-04-14T22:50:16.850902+00:00] Starting batch evaluation batch-2026-04-14-225016
+[2026-04-14T22:50:17.509662+00:00] Loaded manifest with 5 cases
+[2026-04-14T22:50:17.647571+00:00] Processing case case-001 (missing_model)
+[2026-04-14T22:56:35.264439+00:00] Completed case case-001 with status: failed
+[2026-04-14T22:56:35.296678+00:00] Processing case case-002 (wrong_namespace)
+[2026-04-14T23:01:40.446097+00:00] Completed case case-002 with status: failed
+[2026-04-14T23:01:40.471998+00:00] Processing case case-003 (missing_import)
+[2026-04-14T23:09:10.996418+00:00] Completed case case-003 with status: failed
+[2026-04-14T23:09:11.086580+00:00] Completed batch evaluation batch-2026-04-14-225016: 0/5 success

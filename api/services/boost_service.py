@@ -7,6 +7,7 @@ to avoid redundant exec calls and reduce cost on repeated errors.
 import hashlib
 import json
 import logging
+import shlex
 from dataclasses import dataclass, field, asdict
 
 from api.services import docker_service
@@ -71,23 +72,25 @@ async def query_context(container, error_text: str) -> str:
 async def _fetch_boost_context(container, error_text: str) -> BoostContext:
     """Run Boost artisan commands inside the container."""
 
-    # 1. Get schema info
+    # 1. Get schema info (using native Laravel 12 command)
     schema_result = await docker_service.execute(
         container,
-        "php artisan boost:schema --format=text 2>&1",
-        timeout=20,
+        "php artisan db:show --json 2>&1",
+        timeout=60,
     )
     schema_info = schema_result.stdout.strip() if schema_result.exit_code == 0 else ""
 
-    # 2. Get relevant docs excerpt — extract error type for query
-    error_type = _extract_error_type(error_text)
-    docs_result = await docker_service.execute(
+    # 2. Get API Routes (using native Laravel 12 command)
+    # This replaces boost:docs with real project routing context
+    routes_result = await docker_service.execute(
         container,
-        f'php artisan boost:docs --query="{error_type}" --limit=3 2>&1',
-        timeout=20,
+        "php artisan route:list --json 2>&1",
+        timeout=60,
     )
-    docs_raw = docs_result.stdout.strip() if docs_result.exit_code == 0 else ""
-    docs_excerpts = [d.strip() for d in docs_raw.split("\n---\n") if d.strip()]
+    routes_raw = routes_result.stdout.strip() if routes_result.exit_code == 0 else ""
+    # We store the raw JSON for the AI to parse
+    docs_excerpts = [routes_raw] if routes_raw else []
+
 
     # 3. Detect component type from error
     component_type = _detect_component_type(error_text)

@@ -33,17 +33,28 @@ fi
 
 # ── 3. Check Docker and Build Sandbox ───────────────────────────────────────
 echo "▶ Checking Docker daemon..."
+FORCE_BUILD=false
+for arg in "$@"; do
+    if [ "$arg" == "--build" ]; then
+        FORCE_BUILD=true
+    fi
+done
+
 if docker info > /dev/null 2>&1; then
-    if ! docker image inspect laravel-sandbox:latest > /dev/null 2>&1; then
-        echo "▶ Sandbox image not found. Building (this can take 5-10 mins)..."
-        # Pure legacy build — no flags, no buildkit, just the basics
+    if ! docker image inspect laravel-sandbox:latest > /dev/null 2>&1 || [ "$FORCE_BUILD" = true ]; then
+        if [ "$FORCE_BUILD" = true ]; then
+            echo "▶ Force rebuild requested. Rebuilding Sandbox (5-10 mins)..."
+        else
+            echo "▶ Sandbox image not found. Building (this can take 5-10 mins)..."
+        fi
         docker build -t laravel-sandbox:latest ./docker/laravel-sandbox/
     else
-        echo "   ✅ Sandbox image already built."
+        echo "   ✅ Sandbox image already built. Use --build to refresh."
     fi
 else
     echo "   ⚠  Docker not running. Server will start, but repair won't work."
 fi
+
 
 # ── 4. Launch FastAPI Server ────────────────────────────────────────────────
 echo ""

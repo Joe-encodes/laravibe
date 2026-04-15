@@ -1,0 +1,4 @@
+case_id,status,iterations,mutation_score,duration_s
+case-001,success,1,100.0,79.56
+case-002,success,1,100.0,110.83
+case-003,success,1,100.0,63.18

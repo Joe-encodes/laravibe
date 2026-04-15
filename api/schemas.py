@@ -20,6 +20,14 @@ class RepairRequest(BaseModel):
             raise ValueError("code must not be empty")
         return v
 
+    @field_validator("code")
+    @classmethod
+    def validate_php_code(cls, v: str) -> str:
+        # Basic validation to ensure it looks like PHP
+        if not v.strip().startswith("<?php"):
+            v = "<?php\n" + v
+        return v
+
 
 class RepairSubmitResponse(BaseModel):
     submission_id: str
@@ -83,6 +91,7 @@ class EvaluateCaseResult(BaseModel):
     iterations: int
     mutation_score: Optional[float] = None
     duration_s: float
+    submission_id: Optional[str] = None
 
 
 class EvaluateResponse(BaseModel):
@@ -90,3 +99,5 @@ class EvaluateResponse(BaseModel):
     success_count: int
     success_rate_pct: float
     cases: list[EvaluateCaseResult]
+    experiment_id: Optional[str] = None
+    status: Optional[str] = None

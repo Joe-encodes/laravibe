@@ -9,11 +9,12 @@ def dump_latest_iteration():
         cursor = conn.cursor()
         
         cursor.execute('''
-            SELECT submission_id, iteration, error_logs, boost_context, ai_prompt, ai_response, patch_applied
-            FROM repair_iterations
+            SELECT submission_id, iteration_num, error_logs, boost_context, ai_prompt, ai_response, patch_applied
+            FROM iterations
             ORDER BY created_at DESC
             LIMIT 1
         ''')
+
         row = cursor.fetchone()
         
         if not row:

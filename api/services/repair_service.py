@@ -9,6 +9,8 @@ Mutation gate (Gemini): after Pest passes, run pest --mutate >= threshold.
 import asyncio
 import json
 import logging
+import re
+import shlex
 import time
 import uuid
 from datetime import datetime, timezone
@@ -59,6 +61,12 @@ async def run_repair_loop(
     current_pest_test: str | None = None
 
 
+    yield _evt("submission_start", id=submission_id)
+    
+    # Create a contextual logger for this specific submission
+    # This allows every log message to automatically include the submission_id
+    ctx_logger = logging.LoggerAdapter(logger, {"submission_id": submission_id})
+    ctx_logger.info("Starting repair process")
     # Mark submission as running
     submission = await db.get(Submission, submission_id)
     if not submission:
@@ -79,6 +87,11 @@ async def run_repair_loop(
             yield _evt("log_line", msg="Spinning up sandbox container...")
             container = await docker_service.create_container()
 
+            # Pre-flight health check
+            if not await docker_service.ping(container):
+                yield _evt("log_line", msg="❌ Sandbox pre-flight check failed (not responsive). AI will retry later.")
+                raise Exception("Sandbox container created but not responsive to commands.")
+
             # ── 2. Copy current code into container ───────────────────────────
             await docker_service.copy_code(container, current_code)
 
@@ -89,13 +102,8 @@ async def run_repair_loop(
             if supplementary_files:
                 yield _evt("log_line", msg=f"♻️  Re-injecting {len(supplementary_files)} dependency file(s) from previous iterations...")
                 for rel_path, file_content in supplementary_files.items():
-                    abs_path = f"/var/www/sandbox/{rel_path}"
-                    # Use a heredoc written via bash -c to avoid shell escaping issues
-                    inject_cmd = (
-                        f"mkdir -p \"$(dirname '{abs_path}')\" && "
-                        f"cat > '{abs_path}' << 'INJECT_EOF'\n{file_content}\nINJECT_EOF"
-                    )
-                    await docker_service.execute(container, inject_cmd, timeout=15)
+                    # Safely copy via tar stream (no shell escaping needed for content)
+                    await docker_service.copy_file(container, f"/var/www/sandbox/{rel_path}", file_content)
                 
                 # Refresh autoloader after injecting all supplementary files
                 await docker_service.execute(
@@ -108,13 +116,7 @@ async def run_repair_loop(
             # AI generates a test to verify the fix; we must write it so Pest can find it.
             if current_pest_test:
                 yield _evt("log_line", msg="🧪 Injecting AI-generated Pest test suite...")
-                test_path = "/var/www/sandbox/tests/Feature/RepairTest.php"
-                # Use a heredoc to safely write the PHP test file
-                write_test_cmd = (
-                    f"mkdir -p \"$(dirname '{test_path}')\" && "
-                    f"cat > '{test_path}' << 'TEST_EOF'\n{current_pest_test}\nTEST_EOF"
-                )
-                await docker_service.execute(container, write_test_cmd, timeout=15)
+                await docker_service.copy_file(container, "/var/www/sandbox/tests/Feature/RepairTest.php", current_pest_test)
 
             # ── 2c. Configure sandbox DB as SQLite for Boost context ──────────
             # The container runs with --network=none, so MySQL/Redis are
@@ -171,23 +173,28 @@ async def run_repair_loop(
                 fqcn = f"{php_ns}\\\\{classname}"
                 logger.info(f"[Sandbox] namespace={namespace} class={classname} fqcn={fqcn} dest={dest_file}")
                 
-                # Validate using Tinker — more reliable than standalone execution
-                setup_and_test_cmd = f"""
-mkdir -p "{dest_dir}" /var/www/sandbox/app/Http/Controllers /var/www/sandbox/app/Models && 
-cp /submitted/code.php "{dest_file}" 2>/dev/null || true && 
-cd /var/www/sandbox && 
-composer dump-autoload -q 2>&1 && 
-php artisan tinker --execute="
-    try {{
-        if (!class_exists('{fqcn}')) {{
-            throw new Exception('Class {fqcn} not found or failed to load');
-        }}
-        echo 'CLASS_OK';
-    }} catch (Throwable \\$e) {{
-        echo 'ERROR: ' . \\$e->getMessage();
-    }}
-" 2>&1
-"""
+                # Harden paths and Tinker script for shell execution
+                safe_dest_dir = shlex.quote(dest_dir)
+                safe_dest_file = shlex.quote(dest_file)
+                # For the Tinker PHP script string, we'll be careful with single quotes
+                safe_fqcn = fqcn.replace("'", "\\'")
+                
+                setup_and_test_cmd = (
+                    f"mkdir -p {safe_dest_dir} /var/www/sandbox/app/Http/Controllers /var/www/sandbox/app/Models && "
+                    f"cp /submitted/code.php {safe_dest_file} 2>/dev/null || true && "
+                    "cd /var/www/sandbox && "
+                    "composer dump-autoload -q 2>&1 && "
+                    'php artisan tinker --execute="'
+                    "    try {\n"
+                    f"        if (!class_exists('{safe_fqcn}')) {{\n"
+                    f"            throw new Exception('Class {safe_fqcn} not found or failed to load');\n"
+                    "        }\n"
+                    "        echo 'CLASS_OK';\n"
+                    "    } catch (Throwable $e) {\n"
+                    "        echo 'ERROR: ' . $e->getMessage();\n"
+                    "    }\n"
+                    '" 2>&1'
+                )
                 exec_result = await docker_service.execute(
                     container, setup_and_test_cmd, timeout=settings.container_timeout_seconds,
                 )
@@ -355,30 +362,39 @@ php artisan tinker --execute="
                 fix_description=ai_resp.fix_description,
             )
 
+            # ── 6b. Ensure Pest test has covers() directive ──────────────────
+            if ai_resp.pest_test and "covers(" not in ai_resp.pest_test:
+                # Extract class name from the current code to add covers() directive
+                class_match = re.search(r'class\s+(\w+)', current_code)
+                if class_match:
+                    class_name = class_match.group(1)
+                    # Try to determine the full namespace
+                    ns_match = re.search(r'namespace\s+([^;]+);', current_code)
+                    if ns_match:
+                        namespace = ns_match.group(1).strip()
+                        fqcn = f"\\\\{namespace}\\\\{class_name}"
+                    else:
+                        fqcn = f"\\\\{class_name}"
+                    
+                    # Inject covers() directive after the opening PHP tag
+                    # Use a format that Pest 3 mutation testing reliably identifies
+                    covers_line = f"\ncovers({fqcn}::class);\n"
+                    if "<?php\n" in ai_resp.pest_test:
+                        ai_resp.pest_test = ai_resp.pest_test.replace("<?php\n", "<?php\n" + covers_line, 1)
+                    else:
+                        ai_resp.pest_test = covers_line + ai_resp.pest_test
+                    
+                    ctx_logger.info(f"[Mutation] Injected covers({fqcn}::class) into Pest test")
+
             # ── 7. Apply patch ────────────────────────────────────────────────
             try:
                 new_code_or_file = patch_service.apply(current_code, ai_resp.patch)
                 
                 if ai_resp.patch.action == "create_file":
                     yield _evt("log_line", msg=f"📝 Creating new file: {ai_resp.patch.filename}")
-
-                    dest_path = f"/var/www/sandbox/{ai_resp.patch.filename}"
-                    # apply() returns current_code unchanged for create_file.
-                    # The new file's content comes directly from the patch spec (stripped of fences).
                     content = strip_markdown_fences(ai_resp.patch.replacement)
-                    
-                    create_cmd = f"""
-mkdir -p "$(dirname '{dest_path}')" && 
-cat << 'EOF_CREATE' > '{dest_path}'
-{content}
-EOF_CREATE
-cd /var/www/sandbox && composer dump-autoload -q 2>&1
-"""
-                    await docker_service.execute(container, create_cmd)
-                    # ── Register for persistence across iterations ─────────────
-                    # Containers are destroyed after each iteration. Without adding
-                    # this file to supplementary_files, the next fresh container
-                    # starts bare and the same "class not found" error recurs forever.
+                    # Safely copy via tar stream
+                    await docker_service.copy_file(container, f"/var/www/sandbox/{ai_resp.patch.filename}", content)
                     supplementary_files[ai_resp.patch.filename] = content
                     yield _evt("log_line", msg=f"📌 Registered {ai_resp.patch.filename} — will persist across containers ({len(supplementary_files)} file(s) total)")
                     # Do NOT change current_code — we are adding a dependency
@@ -388,13 +404,8 @@ cd /var/www/sandbox && composer dump-autoload -q 2>&1
                 # Capture the new Pest test for the next iteration (or current mutation gate)
                 if ai_resp.pest_test:
                     current_pest_test = ai_resp.pest_test
-                    # We also write it immediately if the container is still alive for the mutation gate
-                    test_path = "/var/www/sandbox/tests/Feature/RepairTest.php"
-                    write_test_cmd = (
-                        f"mkdir -p \"$(dirname '{test_path}')\" && "
-                        f"cat > '{test_path}' << 'TEST_EOF'\n{current_pest_test}\nTEST_EOF"
-                    )
-                    await docker_service.execute(container, write_test_cmd, timeout=15)
+                    # Safely copy via tar stream
+                    await docker_service.copy_file(container, "/var/www/sandbox/tests/Feature/RepairTest.php", current_pest_test)
                     
                 yield _evt("patch_applied",
                     action=ai_resp.patch.action,
@@ -426,7 +437,7 @@ cd /var/www/sandbox && composer dump-autoload -q 2>&1
             await db.commit()
 
         except Exception as exc:
-            logger.exception(f"[Repair] Unexpected error in iteration {iteration_num}: {exc}")
+            ctx_logger.exception(f"[Repair] Unexpected error in iteration {iteration_num}: {exc}")
             yield _evt("error", msg=f"💥 Iteration {iteration_num + 1} crashed: {type(exc).__name__}: {exc}")
             # Don't silently continue — emit the error visibly and keep going
             # The loop will pick up the next iteration naturally

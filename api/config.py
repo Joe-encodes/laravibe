@@ -20,14 +20,15 @@ class Settings(BaseSettings):
     cerebras_api_key: str = ""               # cloud.cerebras.ai — blazing fast
     gemini_api_key: str = ""                 # aistudio.google.com — free (rate-limited)
     groq_api_key: str = ""                   # console.groq.com — free tier
+    nvidia_api_key: str = ""                 # build.nvidia.com — strong & safe picks
     deepseek_api_key: str = ""              # platform.deepseek.com — near-free
     ollama_base_url: str = "http://localhost:11434"  # local, no key needed
     # Paid providers
     anthropic_api_key: str = ""
     openai_api_key: str = ""
-    # Active provider: qwen | cerebras | gemini | groq | deepseek | ollama | anthropic | openai
-    default_ai_provider: str = "qwen"
-    ai_model: str = "qwen3-max"
+    # Active provider: fallback | qwen | cerebras | gemini | groq | deepseek | ollama | anthropic | openai
+    default_ai_provider: str = "fallback"
+    ai_model: str = "nvidia_nim/meta/llama-3.3-70b-instruct"
     ai_temperature: float = 0.0              # deterministic for reproducibility
 
     # ── Docker ───────────────────────────────────────────────────────────────

@@ -59,6 +59,12 @@
   --color-machined-footer: #0f172a; /* slate-900 */
   --color-machined-border: #1e293b; /* slate-800 */
   --color-machined-text-dim: #64748b; /* slate-500 */
+  
+  /* Premium Glow Tokens */
+  --color-rose-glow: #ec4899;
+  --color-indigo-glow: #8b5cf6;
+  --color-glass-bg: rgba(15, 23, 42, 0.7);
+  --color-glass-border: rgba(255, 255, 255, 0.1);
 }
 
 /* Light Mode Overrides */
@@ -125,5 +131,14 @@
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
     @apply bg-outline-variant rounded-full;
+  }
+  .glassmorphism {
+    @apply bg-glass-bg backdrop-blur-[12px] border border-glass-border shadow-[0_8px_32px_0_rgba(0,0,0,0.4)];
+  }
+  .rose-glow {
+    @apply shadow-[0_0_20px_rgba(236,72,153,0.2)];
+  }
+  .indigo-glow {
+    @apply shadow-[0_0_20px_rgba(139,92,246,0.3)];
   }
 }

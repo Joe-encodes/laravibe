@@ -33,6 +33,13 @@ The following context was retrieved from the application's actual state:
 - Generated Pest tests must be deterministic (no network calls, no time-dependent logic)
 - Do not add any external dependencies
 
+## PEST TEST REQUIREMENTS (CRITICAL FOR MUTATION TESTING)
+- **MANDATORY**: Every test file MUST include `covers(\App\Full\Namespace\ClassName::class);` at the top level.
+- **MANDATORY**: Use the fully qualified class name with a LEADING BACKSLASH.
+- **MANDATORY**: Tests must be mutation-testable (no mocks of static methods, no sleep, no network).
+- **MANDATORY**: Use Pest 3 syntax with `test()` function blocks.
+- **MANDATORY**: Import test helpers: `use function Pest\Laravel\getJson;` etc.
+
 ## RESPONSE FORMAT
 Return ONLY valid JSON — no markdown, no prose before or after. Exactly this shape:
 {
@@ -44,10 +51,6 @@ Return ONLY valid JSON — no markdown, no prose before or after. Exactly this s
     "replacement": "the new code string (for create_file, the FULL PHP class code)",
     "filename": "path/to/file.php (required ONLY when action=create_file)"
   },
-  "pest_test": "<?php\nuse function Pest\\Laravel\\...;\nuse App\\Http\\Controllers\\Api\\StatusController; // Example\n\n// IMPORTANT: Pest 3 mutation testing REQUIRES covers() or mutates()\ncovers(StatusController::class);\n\ntest('repaired code behaves correctly', function() {\n    // test body here\n});"
+  "pest_test": "<?php\nuse function Pest\\Laravel\\getJson;\nuse App\\Http\\Controllers\\Api\\StatusController;\n\n// CRITICAL: Pest 3 mutation testing REQUIRES covers() directive\ncovers(StatusController::class);\n\ntest('repaired code behaves correctly', function() {\n    // test body here\n});"
 }
-
-Allowed patch actions:
-- "replace"     — find `target` in current code and swap it with `replacement`
-- "append"      — append `replacement` to end of current code (no `target` needed)
-- "create_file" — create a new file at `filename` with content `replacement`
+{pest_template}

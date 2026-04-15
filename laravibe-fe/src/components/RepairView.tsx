@@ -45,6 +45,7 @@ export const RepairView: React.FC = () => {
           setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: data.msg }]);
           if (data.msg.includes('Spinning up')) setStage('SPINNING');
           if (data.msg.includes('Executing code')) setStage('LINTING');
+          if (data.msg.includes('Injecting AI-generated Pest')) setStage('TESTING');
         } else if (event === 'iteration_start') {
           setIteration(data.iteration);
           setMaxIterations(data.max);
@@ -69,7 +70,7 @@ export const RepairView: React.FC = () => {
             mutationScore: data.score.toFixed(1),
             duration: prev.duration + (data.duration_ms || 0)
           }));
-          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: `Mutation score verified: ${data.score}%` }]);
+          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: `Mutation score: ${data.score}% (${data.passed ? 'PASSED' : 'FAILED - TWEAKING'})` }]);
         } else if (event === 'ai_thinking') {
           setStage('THINKING');
           if (data.diagnosis) {

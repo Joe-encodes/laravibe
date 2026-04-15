@@ -18,13 +18,12 @@ from api.routers.history import router as history_router
 from api.routers.evaluate import router as evaluate_router
 from api.routers.stats import router as stats_router
 from api.routers.admin import router as admin_router
+from api.logging_config import setup_logging
 
 settings = get_settings()
 
-logging.basicConfig(
-    level=logging.DEBUG if settings.debug else logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-)
+# Initialize unified logging (Console + File)
+setup_logging(debug=settings.debug)
 logger = logging.getLogger(__name__)
 
 

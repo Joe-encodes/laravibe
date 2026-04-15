@@ -33,6 +33,7 @@ __pycache__/
 /data/
 
 # Frontend (LaraVibe-FE)
+/frontend/
 laravibe-fe/node_modules/
 laravibe-fe/dist/
 laravibe-fe/.env.local

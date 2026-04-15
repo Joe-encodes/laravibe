@@ -48,12 +48,12 @@ It repeats up to **7 times** until the code is clean, or reports failure.
 
 ## 2. System Architecture
 
-The platform has four physical tiers:
+The platform operates as a multi-tier web application orchestration engine:
 
 | Tier | Technology | Location |
 |------|-----------|----------|
-| **Frontend** | Vanilla JS + CodeMirror 5 + diff2html | `frontend/` |
-| **Coordinator API** | FastAPI Python 3.12 | `api/` |
+| **Frontend** | React 19 + TypeScript + Tailwind 4 | `laravibe-fe/` |
+| **Coordinator API** | FastAPI Python 3.12 (asyncio) | `api/` |
 | **Sandbox Runtime** | Docker container (PHP 8.3 + Laravel 12) | `docker/laravel-sandbox/` |
 | **AI Providers** | Claude / Gemini / GPT / Groq / DeepSeek / Ollama | External / Local |
 
@@ -576,122 +576,76 @@ Runs the full batch evaluation suite defined in `batch_manifest.yaml`. Used for 
 
 ---
 
-## 9. Frontend UI Walkthrough
+## 9. Frontend Deep-Dive (`laravibe-fe/`)
 
-![Platform UI](C:\Users\ESTHER\.gemini\antigravity\brain\42fcb583-c7f5-4f26-950b-54824fad965d\platform_ui_overview_1775660301458.png)
+The frontend is a modern SPA designed for real-time observability and high-density data visualization, moving far beyond traditional static HTML to a dynamic URL-driven shell.
 
-The frontend is a single HTML page (`frontend/index.html`) with no build step — open it directly in the browser.
+### 9.1 Technology Stack
+- **Framework**: React 19 with TypeScript.
+- **Build Tool**: Vite 6.
+- **Styling**: Tailwind CSS 4.0 with `@tailwindcss/vite` plugin.
+- **Routing**: React Router 7 (URL-driven navigation ensures deep-linked history mapping perfectly to `Submission` UUIDs).
+- **Icons & Components**: Lucide React icons, framer-motion (optional micro-animations).
 
-### Three-Panel Layout
+### 9.2 Design System: "Glass-Industrial"
+The platform features an Anthropic-inspired aesthetic intended for professional research environments:
+- **Surface Layering**: Hierarchical transparency (`surface-container-low/high/lowest`) simulating depth without relying on heavy shadows.
+- **Typography**: Extensive use of monospaced and modern sans-serif fonts for code-centric observability.
+- **Interaction HUD**: Hover-triggered accents and pulsing status indicators for the repair loop.
 
-```
-┌─────────────────┬──────────────────┬──────────────────┐
-│  📝 Code Input  │  📡 Live Progress │  ✅ Result        │
-│                 │                  │                  │
-│  CodeMirror 5   │  SSE log stream  │  diff2html view  │
-│  PHP editor     │  Iteration badge │  Iteration list  │
-│                 │                  │  Boost context   │
-│  [📂 Upload]    │                  │  [⬇ Download]    │
-│  Max iter: 7    │                  │                  │
-│  [🔧 Repair]   │                  │                  │
-└─────────────────┴──────────────────┴──────────────────┘
-                         Sidebar: History
-```
+### 9.3 Live Streaming Engine (SSE)
+The `RepairView` component utilizes an `EventSource` to visualize the backend workflow. The frontend state engine maps incoming backend SSE events to a linear UI progression:
+`SPINNING` → `BOOSTING` → `THINKING` → `PATCHING` → `TESTING` → `MUTATING` → `COMPLETE`.
 
-### Panel 1 — Code Input
-
-- **CodeMirror 5** editor with PHP syntax highlighting (Dracula dark theme)
-- Preloaded with a sample broken Laravel controller
-- **File upload button** — accepts `.php` files
-- **Max iterations slider** (1–10, default 7)
-- **🔧 Repair Code button** — submits to `POST /api/repair` then opens SSE stream
-
-### Panel 2 — Live Progress
-
-- Real-time log lines, colour-coded by event type
-- **Iteration counter** (`1 / 7`) updates on each `iteration_start` event
-- Shows diagnosis, fix description, Pest results, mutation score badge
-
-### Panel 3 — Result
-
-- **diff2html** renders a syntax-highlighted before/after diff
-- **Iteration History accordion** — click to expand each iteration's error logs
-- **Boost Context panel** (collapsible) — shows the schema/docs context used
-- **⬇ Download button** — downloads the repaired PHP code as a file
-
-### Header
-
-- **⚡ Laravel AI Repair** branding
-- **Health badge** — turns green/red based on `GET /api/health`
-- Thesis attribution
-
-### Sidebar — History
-
-Lists the 20 most recent submissions with status badges. Click any entry to reload its final code into the editor.
+It gracefully parses `data: {"event": "log_line", ...}` updates, appending them to a virtualized log scroller.
 
 ---
 
-## 10. Docker Sandbox Explained
+## 10. DevOps & Sandbox Orchestration
 
-### Image: `laravel-sandbox:latest`
+The platform employs a strictly isolated runtime model to ensure security and execution determinism.
 
-Built from `docker/laravel-sandbox/Dockerfile`. The image contains:
+### 10.1 Sandbox Build Architecture (`laravel-sandbox:latest`)
+Built from `docker/laravel-sandbox/Dockerfile`, the image outputs a production-grade Alpine 3.20 + PHP 8.3 environment preloaded with Laravel 12 and Pest 3. 
 
-| Component | Version |
-|-----------|---------|
-| Base OS | Alpine Linux (php:8.3-cli-alpine) |
-| PHP | 8.3 |
-| Laravel | 12.* |
-| Pest | 3.x |
-| Pest Mutate Plugin | 3.x |
-| Laravel Boost | Latest |
-| pcov | Latest (coverage driver for mutation testing) |
-| Redis PHP ext | Latest |
-| Composer | 2.x |
+The build pipeline:
+1. Installs Alpine system packages.
+2. Compiles Redis and `pcov` (for mutation testing coverage) via parallelized `pecl`.
+3. Bootstraps `composer create-project laravel/laravel sandbox "12.*"`.
+4. Installs Laravel Pest, Boost, and Sanctum packages.
 
-### Build Time
+### 10.2 Automated Environment Setup (`start.sh`)
+The `start.sh` utility orchestrates the entire DevOps lifecycle for local development:
+1. **Venv Management**: Automates Python 3.12 environment creation and package synchronization.
+2. **Secret Management**: Validates `.env` and `SECRET_KEY` presence.
+3. **Image Logic**: Checks for `laravel-sandbox:latest` and performs a clean build if missing.
+4. **Daemon Assessment**: Validates the Docker daemon is accessible via WSL2 integration.
 
-First build takes approximately **5 minutes** because it:
-1. Installs Alpine system packages
-2. Compiles Redis and pcov PHP extensions via PECL
-3. Runs `composer create-project laravel/laravel sandbox "12.*"`
-4. Installs Laravel Pest, Boost, and Sanctum packages
-
-Subsequent builds use Docker's layer cache and are near-instant unless the Dockerfile changes.
-
-### Container Security Constraints
-
-Each repair container runs with:
+### 10.3 Container Security Constraints
+Each code execution runs within a tightly bounded lifecycle:
 
 ```python
 client.containers.run(
     image="laravel-sandbox:latest",
     network_mode="none",                    # Zero internet access
-    mem_limit="512m",                       # Memory cap
-    nano_cpus=int(0.5 * 1e9),              # 0.5 CPU core
-    pids_limit=64,                          # Max 64 processes
+    mem_limit="512m",                       # Memory cap restricts OOM payloads
+    nano_cpus=int(0.5 * 1e9),              # 0.5 CPU core restricts cryptomining/CPU hogs
+    pids_limit=64,                          # Max 64 processes restricts fork bombs
     security_opt=["no-new-privileges:true"],
     command="sleep infinity",               # Stays alive for exec commands
 )
 ```
 
-**Critically:** every container is destroyed inside a `finally` block in `repair_service.py`. No container leaks, ever:
+**Critically:** every container is forcefully destroyed inside a `finally` block in `repair_service.py`. No container leaks or persists beyond an iteration crash.
 
-```python
-finally:
-    if container:
-        await docker_service.destroy(container)
-```
+### 10.4 Code Injection Mechanism
+User code is streamed to `/submitted/code.php` inside the container via Python's `tarfile` module — utilizing an in-memory tar-streaming mechanism without touching the host filesystem.
 
-### Code Injection Mechanism
-
-User code is written to `/submitted/code.php` inside the container via Python's `tarfile` module — an in-memory tar archive, no temp files on the host filesystem.
-
-The repair loop then:
-1. Detects the PHP namespace via `grep`
-2. Copies `code.php` to the correct location in the Laravel directory tree
-3. Runs `composer dump-autoload` to register the class
-4. Validates via `php artisan tinker`
+The repair pipeline then:
+1. Detects the PHP namespace.
+2. Copies `code.php` to the correct location in the Laravel directory tree.
+3. Automatically triggers `composer dump-autoload` to register the class.
+4. Validates class-loading logic via `php artisan tinker`.
 
 ---
 

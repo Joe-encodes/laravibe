@@ -32,13 +32,28 @@ async def health_check() -> HealthResponse:
     except Exception as exc:
         db_status = f"error: {exc}"
 
-    # Check AI (just verify key is set)
+    # Check AI configuration for the default provider
     from api.config import get_settings
     settings = get_settings()
-    ai_status = "key_set" if (
-        settings.anthropic_api_key or settings.openai_api_key or settings.groq_api_key or 
-        settings.dashscope_api_key or settings.cerebras_api_key or settings.gemini_api_key
-    ) else "no_key_configured"
+    provider = settings.default_ai_provider.lower()
+    
+    provider_keys = {
+        "anthropic": settings.anthropic_api_key,
+        "openai": settings.openai_api_key,
+        "groq": settings.groq_api_key,
+        "qwen": settings.dashscope_api_key,
+        "cerebras": settings.cerebras_api_key,
+        "gemini": settings.gemini_api_key,
+        "deepseek": settings.deepseek_api_key,
+    }
+    
+    if provider == "ollama":
+        ai_status = f"ollama (base: {settings.ollama_base_url})"
+    elif provider in provider_keys:
+        key = provider_keys[provider]
+        ai_status = f"{provider}: configured" if key else f"{provider}: missing_key"
+    else:
+        ai_status = f"unknown_provider: {provider}"
 
     return HealthResponse(
         status="ok",

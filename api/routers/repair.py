@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api", tags=["repair"])
 settings = get_settings()
 
 # In-memory event queues per submission_id (for SSE)
-# In production, replace with Redis pub/sub
+# In production, replace with Redis pub/sub or database
 _event_queues: dict[str, list[dict]] = {}
 _repair_done: dict[str, bool] = {}
 
