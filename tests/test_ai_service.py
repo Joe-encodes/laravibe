@@ -17,12 +17,12 @@ from api.services.ai_service import (
 VALID_RESPONSE = json.dumps({
     "diagnosis": "Missing use statement for App\\Models\\Product",
     "fix_description": "Add the missing import at the top of the file",
-    "patch": {
+    "patches": [{
         "action": "replace",
         "target": "<?php",
         "replacement": "<?php\nuse App\\Models\\Product;",
         "filename": None,
-    },
+    }],
     "pest_test": "it('returns products', fn() => expect(true)->toBeTrue());",
 })
 
@@ -32,7 +32,7 @@ class TestParseResponse:
         result = _parse_response(VALID_RESPONSE)
         assert isinstance(result, AIRepairResponse)
         assert result.diagnosis == "Missing use statement for App\\Models\\Product"
-        assert result.patch.action == "replace"
+        assert result.patches[0].action == "replace"
         assert result.pest_test != ""
 
     def test_strips_markdown_fences(self):
@@ -43,7 +43,7 @@ class TestParseResponse:
     def test_plain_fences_stripped(self):
         fenced = f"```\n{VALID_RESPONSE}\n```"
         result = _parse_response(fenced)
-        assert result.patch.action == "replace"
+        assert result.patches[0].action == "replace"
 
     def test_invalid_json_raises_value_error(self):
         with pytest.raises((ValueError, json.JSONDecodeError)):
@@ -53,12 +53,12 @@ class TestParseResponse:
         minimal = json.dumps({
             "diagnosis": "x",
             "fix_description": "y",
-            "patch": {"action": "append", "replacement": "// fixed"},
+            "patches": [{"action": "append", "replacement": "// fixed"}],
             "pest_test": "",
         })
         result = _parse_response(minimal)
-        assert result.patch.target is None
-        assert result.patch.filename is None
+        assert result.patches[0].target is None
+        assert result.patches[0].filename is None
 
 
 class TestBuildPrompt:

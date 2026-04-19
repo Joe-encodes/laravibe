@@ -9,7 +9,6 @@ from api.services import boost_service
 from api.services.boost_service import (
     BoostContext,
     _cache_key,
-    _extract_error_type,
     _detect_component_type,
 )
 
@@ -46,28 +45,22 @@ class TestBoostContext:
 class TestCacheKey:
     def test_same_error_same_key(self):
         err = "Class App\\Models\\Product not found"
-        assert _cache_key(err) == _cache_key(err)
+        assert _cache_key("sub-1", err) == _cache_key("sub-1", err)
 
     def test_different_error_different_key(self):
-        assert _cache_key("error A") != _cache_key("error B")
+        assert _cache_key("sub-1", "error A") != _cache_key("sub-1", "error B")
+
+    def test_different_submission_different_key(self):
+        err = "same error"
+        assert _cache_key("sub-1", err) != _cache_key("sub-2", err)
 
     def test_key_is_consistent_across_calls(self):
         err = "Fatal error: Call to undefined function"
-        k1 = _cache_key(err)
-        k2 = _cache_key(err)
+        k1 = _cache_key("sub-1", err)
+        k2 = _cache_key("sub-1", err)
         assert k1 == k2
 
 
-class TestExtractErrorType:
-    def test_extracts_exception_line(self):
-        error = "Some preamble\nFatal error: Class not found\nStack trace..."
-        result = _extract_error_type(error)
-        assert "Fatal error" in result
-
-    def test_falls_back_to_first_120_chars(self):
-        error = "no keywords here at all, just a plain error message without any tags"
-        result = _extract_error_type(error)
-        assert len(result) <= 120
 
 
 class TestDetectComponentType:
@@ -88,11 +81,11 @@ class TestDetectComponentType:
 class TestQueryContext:
     async def test_cache_hit_skips_docker_call(self):
         # Pre-populate cache
-        key = _cache_key("cached error")
+        key = _cache_key("sub-cached", "cached error")
         boost_service._cache[key] = json.dumps({"schema_info": "cached", "docs_excerpts": [], "component_type": "unknown"})
 
         container = MagicMock()
-        result = await boost_service.query_context(container, "cached error")
+        result = await boost_service.query_context(container, "cached error", submission_id="sub-cached")
         data = json.loads(result)
         assert data["schema_info"] == "cached"
         # container should not have been used
