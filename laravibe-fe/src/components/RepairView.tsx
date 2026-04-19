@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Cpu, RotateCw, AlertCircle, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { MASTER_REPAIR_TOKEN } from '../constants';
 
 export const RepairView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -32,7 +33,7 @@ export const RepairView: React.FC = () => {
     if (!submissionId) return;
     
     setLogs([{ id: 'init', timestamp: new Date().toLocaleTimeString(), type: 'INFO', message: 'Connecting to repair stream...' }]);
-    const eventSource = new EventSource(`/api/repair/${submissionId}/stream`);
+    const eventSource = new EventSource(`/api/repair/${submissionId}/stream?token=${MASTER_REPAIR_TOKEN}`);
 
     eventSource.onmessage = (e) => {
       try {
@@ -41,7 +42,16 @@ export const RepairView: React.FC = () => {
         const { event, data } = payload;
         const ts = new Date().toLocaleTimeString();
 
-        if (event === 'log_line') {
+        if (event === 'submission_start') {
+          if (data.prompt) {
+            setLogs(prev => [...prev, { 
+              id: 'prompt', 
+              timestamp: ts, 
+              type: 'INFO', 
+              message: `User Instructions: "${data.prompt}"` 
+            }]);
+          }
+        } else if (event === 'log_line') {
           setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: data.msg }]);
           if (data.msg.includes('Spinning up')) setStage('SPINNING');
           if (data.msg.includes('Executing code')) setStage('LINTING');

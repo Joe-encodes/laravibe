@@ -1,7 +1,9 @@
+import React from 'react';
 import { useParams } from 'react-router-dom';
 import { Download, ChevronLeft, CheckCircle2, FileCode, History, Layers, Terminal, AlertCircle, Brain } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { MASTER_REPAIR_TOKEN } from '../constants';
 
 export const IterationView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -14,7 +16,11 @@ export const IterationView: React.FC = () => {
     const load = async () => {
       console.info('[LaraVibe] Loading iteration details...', { submissionId });
       try {
-        const res = await fetch(`/api/repair/${submissionId}`);
+        const res = await fetch(`/api/repair/${submissionId}`, {
+          headers: {
+            'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+          }
+        });
         console.info('[LaraVibe] Repair API Response:', { status: res.status });
         const data = await res.json();
         console.info('[LaraVibe] Data retrieved:', { status: data.status, iters: data.iterations?.length });
@@ -64,6 +70,17 @@ export const IterationView: React.FC = () => {
               <Terminal className="w-4 h-4 shrink-0 text-primary" />
               <span>Target analysis completed with <span className="text-primary font-bold">{submission.iterations?.length || 0} iterations</span>. Logic verified against Pest test suite.</span>
             </div>
+            {submission.user_prompt && (
+              <div className="mt-4 p-3 bg-primary/5 border border-primary/20 rounded-md">
+                <div className="flex items-center gap-2 mb-1">
+                  <Brain className="w-3 h-3 text-primary" />
+                  <span className="mono text-[8px] font-black uppercase text-primary tracking-widest">Developer Context</span>
+                </div>
+                <p className="text-on-surface-variant text-xs font-mono leading-tight pl-5 border-l border-primary/20">
+                  {submission.user_prompt}
+                </p>
+              </div>
+            )}
           </div>
           <div className="flex gap-4">
             <button 

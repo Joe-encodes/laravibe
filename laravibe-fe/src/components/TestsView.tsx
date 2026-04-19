@@ -1,7 +1,9 @@
+import React from 'react';
 import { useParams } from 'react-router-dom';
 import { CheckCircle2, XCircle, Play, Database, Zap, ShieldCheck, Terminal, Activity, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { MASTER_REPAIR_TOKEN } from '../constants';
 
 export const TestsView: React.FC = () => {
   const { submissionId } = useParams<{ submissionId: string }>();
@@ -13,7 +15,11 @@ export const TestsView: React.FC = () => {
     const load = async () => {
       console.info('[LaraVibe] Loading test results...', { submissionId });
       try {
-        const res = await fetch(`/api/repair/${submissionId}`);
+        const res = await fetch(`/api/repair/${submissionId}`, {
+          headers: {
+            'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+          }
+        });
         console.info('[LaraVibe] Repair API Response:', { status: res.status });
         const data = await res.json();
         console.info('[LaraVibe] Data retrieved:', { iterations: data.iterations?.length });
