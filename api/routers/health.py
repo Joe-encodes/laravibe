@@ -39,6 +39,7 @@ async def health_check() -> HealthResponse:
     
     provider_keys = {
         "anthropic": settings.anthropic_api_key,
+        "nvidia": settings.nvidia_api_key,
         "openai": settings.openai_api_key,
         "groq": settings.groq_api_key,
         "qwen": settings.dashscope_api_key,
