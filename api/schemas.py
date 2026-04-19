@@ -1,5 +1,10 @@
 """
-api/schemas.py — Pydantic v2 request/response models.
+api/schemas.py — Pydantic v2 request/response schemas.
+
+Naming conventions:
+  *Request  — inbound API payload
+  *Response — outbound API response (including 202 Accepted)
+  *Item     — lightweight list-view shape (no nested relations)
 """
 from __future__ import annotations
 from datetime import datetime
@@ -9,37 +14,39 @@ from pydantic import BaseModel, Field, field_validator
 
 class RepairRequest(BaseModel):
     code: str = Field(..., description="The broken PHP/Laravel code to repair")
-    max_iterations: Optional[int] = Field(None, ge=1, le=10)
-    use_boost: Optional[bool] = Field(True, description="Whether to fetch context from Laravel Boost")
-    use_mutation_gate: Optional[bool] = Field(True, description="Whether to run mutation tests")
-
-    @field_validator("code")
-    @classmethod
-    def code_not_empty(cls, v: str) -> str:
-        if not v.strip():
-            raise ValueError("code must not be empty")
-        return v
+    prompt: Optional[str] = Field(None, description="Optional custom prompt/context to guide the AI before it repairs")
+    max_iterations: Optional[int] = Field(
+        default=None, ge=1, le=7,
+        description="Max repair iterations (1-7). Defaults to server MAX_ITERATIONS config."
+    )
+    use_boost: Optional[bool] = Field(True, description="Fetch Laravel Boost context for each iteration")
+    use_mutation_gate: Optional[bool] = Field(True, description="Enforce mutation test score threshold")
 
     @field_validator("code")
     @classmethod
     def validate_php_code(cls, v: str) -> str:
-        # Basic validation to ensure it looks like PHP
+        """Ensure code is non-empty and has a PHP opening tag."""
+        if not v.strip():
+            raise ValueError("code must not be empty")
         if not v.strip().startswith("<?php"):
             v = "<?php\n" + v
         return v
 
 
-class RepairSubmitResponse(BaseModel):
+class RepairAcceptedResponse(BaseModel):
+    """202 Accepted — repair has been queued."""
     submission_id: str
     status: str = "pending"
     message: str = "Repair queued. Connect to the stream endpoint for live progress."
 
 
-class IterationOut(BaseModel):
+class IterationResponse(BaseModel):
+    """Full snapshot of a single repair iteration."""
     id: str
     iteration_num: int
     status: str
     error_logs: Optional[str] = None
+    boost_context: Optional[str] = None
     patch_applied: Optional[str] = None
     ai_prompt: Optional[str] = None
     ai_response: Optional[str] = None
@@ -51,26 +58,30 @@ class IterationOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class SubmissionOut(BaseModel):
+class SubmissionResponse(BaseModel):
+    """Full submission result including all iteration snapshots."""
     id: str
     status: str
     created_at: datetime
     total_iterations: int
     original_code: str
+    user_prompt: Optional[str] = None
     final_code: Optional[str] = None
     error_summary: Optional[str] = None
     case_id: Optional[str] = None
     category: Optional[str] = None
     experiment_id: Optional[str] = None
-    iterations: list[IterationOut] = []
+    iterations: list[IterationResponse] = []
     model_config = {"from_attributes": True}
 
 
 class HistoryItem(BaseModel):
+    """Lightweight submission shape for history list views."""
     id: str
     status: str
     created_at: datetime
     total_iterations: int
+    user_prompt: Optional[str] = None
     error_summary: Optional[str] = None
     case_id: Optional[str] = None
     category: Optional[str] = None
@@ -94,10 +105,11 @@ class EvaluateCaseResult(BaseModel):
     submission_id: Optional[str] = None
 
 
-class EvaluateResponse(BaseModel):
+class EvaluateBatchResponse(BaseModel):
+    """Response for POST /api/evaluate — includes experiment tracking ID."""
+    experiment_id: Optional[str] = None
+    status: Optional[str] = None
     total_cases: int
     success_count: int
     success_rate_pct: float
     cases: list[EvaluateCaseResult]
-    experiment_id: Optional[str] = None
-    status: Optional[str] = None
