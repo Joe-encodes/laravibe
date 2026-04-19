@@ -52,12 +52,10 @@ You can now access the full application layout in your browser, running against 
 For deep-dives into the architecture, design systems, and thesis methodology, consult the authoritative manuals:
 
 1. **[MANUAL.md](MANUAL.md)**
-   The Master Technical Manual. Detailed breakdown of DevOps container orchestration, the complex 7-Step Iterative Repair Loop, and database schemas.
-2. **[AI_REDESIGN_Specs.md](AI_REDESIGN_Specs.md)**
-   Frontend ground truth. Defines the "Glass-Industrial" design system, routing, and SSE mechanics.
-3. **[BACKEND_SPEC.md](BACKEND_SPEC.md)**
-   Backend ground truth. Service details on AI integrations, Boost context, and patch mutation validation.
-4. **[RESEARCH.md](RESEARCH.md)**
-   Scientific guidelines for the BSc Thesis, detailing ablation studies, mutation scoring, and batch evaluation exports.
+   The Master Technical Manual. Detailed breakdown of DevOps container orchestration, the complex Iterative Repair Loop, and database schemas.
+2. **[BACKEND_SPEC.md](BACKEND_SPEC.md)**
+   Backend technical ground truth. Includes API routing, AI Fallback mechanisms, and Empirical Validation configuration (Batch testing/Ablations).
+3. **[BE_CHECKLIST.md](BE_CHECKLIST.md)**
+   Thesis tracking matrix mapping features directly to thesis claims and literature review.
 
 *Built for research. Driven by precision.*

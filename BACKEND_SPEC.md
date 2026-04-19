@@ -11,8 +11,8 @@ This document provides a low-level technical specification of the LaraVibe (Lara
 - **ORM**: [SQLAlchemy 2.0](https://www.sqlalchemy.org/) with `aiosqlite` (Async SQLite).
 - **Validation**: [Pydantic v2](https://docs.pydantic.dev/latest/) for request/response schemas and environment settings.
 - **Orchestration**: [Docker Python SDK](https://docker-py.readthedocs.io/) for sandbox lifecycle management.
-- **AI Integration**: OpenAI-compatible client (supporting Gemini, Groq, DeepSeek, Anthropic, OpenAI).
-- **Reliability**: `tenacity` for exponential backoff retries on LLM parsing failures.
+- **AI Integration**: Multi-provider LiteLLM-style fallback routing (`FALLBACK_CHAIN`) supporting Nvidia (Deepseek), Cerebras, Groq, Dashscope, Gemini, and Local Ollama natively without a proxy proxy.
+- **Reliability**: `tenacity` for strict API rate limit backoff (fails-fast to next model) and robust JSON recovery.
 
 ---
 
@@ -68,9 +68,10 @@ Exposes the internal state of the Laravel application to the AI:
 
 ### C. `AIService` (Orchestrator)
 Handles the conversation with LLMs:
+- **Fallback Routing**: Uses an aggressive `FALLBACK_CHAIN`. If a provider (e.g. Cerebras) hits rate limits or throws a 429, the orchestrator instantly fails over to the next provider (e.g. Groq) without hanging the backend.
 - **Prompt Templating**: Uses `api/prompts/repair_prompt.txt`. Avoids f-strings to prevent collision with PHP curly braces.
-- **JSON Recovery**: Includes a robust custom parser to handle common LLM mistakes (markdown fences, unescaped PHP backslashes).
-- **Retry Logic**: 3-tier retry on malformed JSON or provider timeout using `tenacity`.
+- **JSON Recovery**: Includes a robust custom parser `_fix_json_escapes` to strictly repair PHP namespace backslashes without corrupting LLM outputs (crucial for models like Deepseek-R1).
+- **Retry Logic**: Tuned `tenacity` max wait to 10 seconds to fail-fast on API errors instead of sleeping for 15 minutes.
 
 ### D. `PatchService` (Mutation)
 Applies the AI's suggested fixes to the current code version:
@@ -80,12 +81,13 @@ Applies the AI's suggested fixes to the current code version:
 
 ---
 
-## 5. The 7-Step Iterative Loop Logic
+## 5. The Iterative Loop Logic (V2)
 
-The `repair_service.py` runs a finite state machine that iterates up to **7 times** (configurable):
+The `repair_service.py` runs a finite state machine that iterates up to **Max Iterations** (default 4):
 
-1.  **Start Iteration**: Spawns a fresh `laravel-sandbox` container.
-2.  **Code Injection**: Injects the current code version + any supplementary models/files created in past iterations.
+**Pre-computation**: Spawns a persistent `laravel-sandbox` container. The container is lifted *out* of the iteration loop, solving the amnesia problem.
+
+1.  **Code Injection**: Injects the current code version. Any supplementary models/files created in past iterations are naturally preserved in the container.
 3.  **Validation (Lint & Tinker)**:
     - Runs `php -l` for syntax.
     - Uses `php artisan tinker` to verify the class is autoloadable via Laravel's service provider.
@@ -102,7 +104,7 @@ The `repair_service.py` runs a finite state machine that iterates up to **7 time
     - Else -> Apply patch and start next iteration.
 
 ### Key Logic Nuances:
-- **Supplementary Files**: Files created via `create_file` are stored in a `supplementary_files` dict and re-injected into every fresh container.
+- **Sandbox Persistence**: Creating a model class on Iteration 1 means that file still physically exists on the filesystem in Iteration 2. This prevents the LLM from getting caught in amnesia loops.
 - **Boilerplate Override**: If a `create_file` action results in a 0% mutation score (common for empty models), the system treats it as a success to prevent infinite loops on boilerplate.
 - **Namespace Detection**: Uses `grep` to dynamically determine where in the `/app` tree the code should be placed (PSR-4 compliant).
 
@@ -111,16 +113,35 @@ The `repair_service.py` runs a finite state machine that iterates up to **7 time
 ## 6. API Endpoint Specification
 
 ### `POST /api/repair`
+- **Security**: Requires Header `Authorization: Bearer <MASTER_TOKEN>`
 - **Accepts**: `RepairRequest` (Code + iteration limits).
 - **Returns**: `202 Accepted` + `submission_id`.
-- **Inner Workings**: Validates code presence, creates DB entry, starts async background task.
 
 ### `GET /api/repair/{id}/stream`
 - **Mechanism**: Server-Sent Events (SSE).
 - **Events**: `iteration_start`, `log_line`, `boost_queried`, `ai_thinking`, `pest_result`, `mutation_result`, `patch_applied`, `complete`.
+- **FE Sync**: Due to fail-fast provider fallbacks, expect `log_line` events indicating `🔄 AI Provider failed. Retrying...`. FE clients should NOT close the connection upon seeing retries. 
 
 ### `GET /api/history`
-- Returns a paginated list of `SubmissionOut` objects (history overview).
+- **Security**: Requires Header `Authorization: Bearer <MASTER_TOKEN>`
+- Returns a paginated list of `SubmissionOut` objects.
 
 ### `POST /api/evaluate`
-- Triggers a batch evaluation suit using `api/routers/evaluate.py`. Loads `batch_manifest.yaml` and iterates over samples in `dataset/`, executing the full repair loop for each.
+- **Security**: Requires Header `Authorization: Bearer <MASTER_TOKEN>`
+- Triggers a batch evaluation using `api/routers/evaluate.py`. 
+
+---
+
+## 7. Configuration and Empirical Evaluation Framework
+
+The platform supports robust Ablation Studies directly from `batch_manifest.yaml` utilizing test targets in `dataset/`:
+
+1.  **Dataset Targets**: E.g. `case-001` containing a `code.php` file with a dedicated defective class.
+2.  **Ablation Toggles**:
+    - `use_boost_context`: Benchmarks repair success with/without framework-internal schematic injection.
+    - `use_mutation_gate`: Benchmarks repair severity (forces survival against Pest's mutator engine).
+3.  **Metrics Captured**:
+    - **Success Rate** (Pass/Fail testing)
+    - **Logic Evolution** (Number of iterations required)
+    - **Recoil Resistance** (Mutation score generated)
+4.  **Exports**: Test outputs are physically appended to `tests/integration/results/batch_report.csv` charting provider efficiencies.
