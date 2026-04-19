@@ -1,3 +1,6 @@
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const MASTER_REPAIR_TOKEN = import.meta.env.VITE_MASTER_REPAIR_TOKEN || 'change-me-in-production';
+
 export const INITIAL_PHP_CODE = `<?php
 
 namespace App\\Http\\Controllers;
