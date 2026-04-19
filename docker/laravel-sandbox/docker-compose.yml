@@ -1,8 +1,9 @@
 version: "3.9"
 
-# docker-compose.yml — Laravel Sandbox Services
-# Used for local development / testing the sandbox environment.
-# The FastAPI coordinator manages individual sandbox containers directly via docker-py.
+# docker-compose.yml — Laravel Sandbox Image Build
+# Used for building and locally testing the sandbox image.
+# The FastAPI coordinator manages individual container lifecycles via docker-py directly.
+# Containers run with --network=none so MySQL/Redis are never reachable anyway.
 
 networks:
   repair-net:
@@ -18,58 +19,9 @@ services:
     container_name: laravel-sandbox
     networks:
       - repair-net
-    environment:
-      SANDBOX_DB_HOST: mysql
-      SANDBOX_DB_PORT: 3306
-      SANDBOX_DB_DATABASE: laravel
-      SANDBOX_DB_USERNAME: laravel
-      SANDBOX_DB_PASSWORD: secret
-      SANDBOX_REDIS_HOST: redis
-    volumes:
-      - submitted_code:/submitted   # coordinator writes code here
-    depends_on:
-      mysql:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
     cpus: "0.5"
     mem_limit: 512m
     pids_limit: 64
     security_opt:
       - no-new-privileges:true
     read_only: false
-
-  # ── MySQL 8.0 ──────────────────────────────────────────────────────────────
-  mysql:
-    image: mysql:8.0
-    container_name: repair-mysql
-    networks:
-      - repair-net
-    environment:
-      MYSQL_ROOT_PASSWORD: rootsecret
-      MYSQL_DATABASE: laravel
-      MYSQL_USER: laravel
-      MYSQL_PASSWORD: secret
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-ularavel", "-psecret"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # ── Redis 7 ───────────────────────────────────────────────────────────────
-  redis:
-    image: redis:7-alpine
-    container_name: repair-redis
-    networks:
-      - repair-net
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 5
-
-volumes:
-  mysql_data:
-  submitted_code:
