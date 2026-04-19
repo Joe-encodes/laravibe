@@ -8,7 +8,7 @@ laravel_version: "12.*"
 ai_provider: qwen              # anthropic | openai | qwen | cerebras
 ai_model: qwen3-max
 ai_temperature: 0.0             # deterministic for reproducibility
-max_iterations: 7
+max_iterations: 4
 mutation_score_threshold: 80    # pest --mutate must score >= 80%
 batch_size: 10
 

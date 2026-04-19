@@ -1,7 +1,5 @@
 /.env
-/.github
 /.pytest_cache
-/requirements-dev.txt
 
 # Virtual Environments
 /venv/
@@ -13,27 +11,35 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Database
+# Database & Runtime Artifacts
 *.sqlite
 *.sqlite3
 *.db
+/data/
+batch_eval_debug.log
+scratch_verify.py
+
+# Internal Developer Docs (not for repo)
+BE_CHECKLIST.md
+AI_REDESIGN_Specs.md
+
+# Scratch / Dev Scripts
+scratch/
+
+# Logs
+*.log
 
 # IDEs & OS
-/.vscode/
-/.idea/
+.vscode/
+.idea/
 .DS_Store
 
-.agents
-.env
-
-# AI Session Data
+# AI Agent Data
+.agents/
 .claude/
+.cursor/
 
-# Internal Data Storage
-/data/
-
-# Frontend (LaraVibe-FE)
-/frontend/
+# Frontend
 laravibe-fe/node_modules/
 laravibe-fe/dist/
 laravibe-fe/.env.local
