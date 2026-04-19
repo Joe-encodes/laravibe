@@ -2,11 +2,11 @@
 api/services/docker_service.py — Container lifecycle management via docker-py.
 
 Responsibilities:
-  - create_container()  spin up a fresh laravel-sandbox container
-  - copy_code()         write PHP code to /submitted/code.php inside container
-  - execute()           run a shell command, return stdout/stderr/exit_code
-  - destroy()           stop + remove the container (always call in finally)
-  - health_check()      confirm Docker daemon is reachable
+- create_container()  spin up a fresh laravel-sandbox container
+- copy_code()         write PHP code to /submitted/code.php inside container
+- execute()           run a shell command, return stdout/stderr/exit_code
+- destroy()           stop + remove the container (always call in finally)
+- health_check()      confirm Docker daemon is reachable
 """
 import asyncio
 import io
@@ -67,11 +67,9 @@ async def is_alive(container) -> bool:
 async def ping(container, retries: int = 3) -> bool:
     """
     Run a fast no-op command to ensure the container is responsive.
-    Retries multiple times as WSL/Docker cold starts can be slow.
     """
     for attempt in range(retries):
         try:
-            # Run 'php -v' as a health check with a more lenient 15s timeout
             result = await execute(container, "php -v", timeout=15)
             if result.exit_code == 0:
                 if attempt > 0:
@@ -81,7 +79,7 @@ async def ping(container, retries: int = 3) -> bool:
             logger.warning(f"[{container.short_id}] Ping attempt {attempt + 1} failed: {e}")
         
         if attempt < retries - 1:
-            await asyncio.sleep(1) # short breather before retry
+            await asyncio.sleep(1)
 
     return False
 
@@ -89,8 +87,6 @@ async def ping(container, retries: int = 3) -> bool:
 async def create_container() -> docker.models.containers.Container:
     """
     Spin up a fresh laravel-sandbox container with strict resource limits.
-    Container has NO network access (--network=none) for security.
-    Returns the container object (still running, waiting for commands).
     """
     loop = asyncio.get_event_loop()
 
@@ -105,14 +101,6 @@ async def create_container() -> docker.models.containers.Container:
             pids_limit=settings.container_pid_limit,
             read_only=False,                  # needs write access for composer / artisan
             security_opt=["no-new-privileges:true"],
-            environment={
-                "SANDBOX_DB_HOST": settings.sandbox_db_host,
-                "SANDBOX_DB_PORT": str(settings.sandbox_db_port),
-                "SANDBOX_DB_DATABASE": settings.sandbox_db_database,
-                "SANDBOX_DB_USERNAME": settings.sandbox_db_username,
-                "SANDBOX_DB_PASSWORD": settings.sandbox_db_password,
-                "SANDBOX_REDIS_HOST": settings.sandbox_redis_host,
-            },
             command="sleep infinity",         # keep alive until we exec into it
             remove=False,                     # we destroy manually in finally block
         )
@@ -144,12 +132,11 @@ async def copy_file(container, dest_path: str, content: str) -> None:
             tar.addfile(info, io.BytesIO(content_bytes))
         tar_buffer.seek(0)
 
-        # Ensure directory exists
         dest_dir = str(pathlib.Path(dest_path).parent)
         container.exec_run(f"mkdir -p {dest_dir}", user="root")
+        container.exec_run(f"chmod 777 {dest_dir}", user="root")
         
-        # put_archive needs the target directory
-        container.put_archive(dest_dir, tar_buffer.getvalue())
+        container.put_archive(dest_dir, tar_buffer.read())
         logger.debug(f"[{container.short_id}] File copied to {dest_path}")
 
     await loop.run_in_executor(None, _copy)
@@ -192,8 +179,6 @@ async def execute(
         )
     except asyncio.TimeoutError:
         logger.warning(f"[{container.short_id}] Command timed out after {timeout}s: {command}")
-
-        # Check if container is still alive before stopping it
         if await is_alive(container):
             logger.info(f"[{container.short_id}] Container still alive after timeout - keeping it running for next command")
             return ExecResult(
@@ -211,7 +196,6 @@ async def execute(
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
     except Exception as exc:
-        # Catch requests.exceptions.ReadTimeout or other Docker SDK issues
         duration_ms = int((time.monotonic() - start) * 1000)
         err_msg = f"Docker engine error: {exc}"
         logger.error(f"[{container.short_id}] {err_msg} (after {duration_ms}ms)")
@@ -244,4 +228,4 @@ async def destroy(container) -> None:
         except Exception as exc:
             logger.warning(f"Could not remove container {container.short_id}: {exc}")
 
-    await loop.run_in_executor(None, _destroy)
+    return await loop.run_in_executor(None, _destroy)
