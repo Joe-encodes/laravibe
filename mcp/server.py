@@ -1,9 +1,5 @@
 """
-mcp/server.py — MCP (Model Context Protocol) server for the repair platform.
-
-Exposes one tool: repair_laravel_code
-Uses the official FastMCP SDK which handles the initialize/initialized handshake
-and all JSON-RPC 2.0 protocol details automatically.
+MCP (Model Context Protocol) server for the repair platform.
 
 Usage in Cursor .cursor/mcp.json:
 {
@@ -22,8 +18,13 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 REPAIR_API_URL = os.getenv("REPAIR_API_URL", "http://localhost:8000")
+REPAIR_API_TOKEN = os.getenv("REPAIR_API_TOKEN", "change-me-in-production")
 POLL_INTERVAL_SECONDS = 1.5
 MAX_WAIT_SECONDS = 600  # 10 min max
+
+HEADERS = {
+    "Authorization": f"Bearer {REPAIR_API_TOKEN}"
+}
 
 mcp = FastMCP(
     "Laravel AI Repair",
@@ -35,7 +36,7 @@ mcp = FastMCP(
 
 
 @mcp.tool()
-async def repair_laravel_code(code: str, max_iterations: int = 7) -> str:
+async def repair_laravel_code(code: str, max_iterations: int = 4) -> str:
     """Submit broken PHP/Laravel code for automated repair.
 
     The platform runs the code in a Docker sandbox, diagnoses errors using
@@ -57,6 +58,7 @@ async def repair_laravel_code(code: str, max_iterations: int = 7) -> str:
         resp = await client.post(
             f"{REPAIR_API_URL}/api/repair",
             json={"code": code, "max_iterations": max_iterations},
+            headers=HEADERS,
         )
         resp.raise_for_status()
         submission_id = resp.json()["submission_id"]
@@ -66,7 +68,8 @@ async def repair_laravel_code(code: str, max_iterations: int = 7) -> str:
         while time.monotonic() < deadline:
             await asyncio.sleep(POLL_INTERVAL_SECONDS)
             status_resp = await client.get(
-                f"{REPAIR_API_URL}/api/repair/{submission_id}"
+                f"{REPAIR_API_URL}/api/repair/{submission_id}",
+                headers=HEADERS,
             )
             status_resp.raise_for_status()
             data = status_resp.json()

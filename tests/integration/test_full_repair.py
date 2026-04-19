@@ -22,9 +22,12 @@ SKIP = not os.getenv("INTEGRATION")  # set INTEGRATION=1 to run
 pytestmark = pytest.mark.skipif(SKIP, reason="Set INTEGRATION=1 to run integration tests")
 
 
+AUTH_HEADERS = {"Authorization": "Bearer change-me-in-production"}
+
+
 def _submit_and_wait(code: str, max_iter: int = 4, timeout: int = 300) -> dict:
     """Submit code and poll until complete. Returns final submission dict."""
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=30, headers=AUTH_HEADERS) as client:
         r = client.post(f"{REPAIR_API}/api/repair", json={"code": code, "max_iterations": max_iter})
         r.raise_for_status()
         sub_id = r.json()["submission_id"]
@@ -81,7 +84,7 @@ class TestEvaluateEndpoint:
     def test_evaluate_returns_results(self, api_health):
         """The /api/evaluate endpoint should run all samples and return a report."""
         with httpx.Client(timeout=600) as client:
-            r = client.get(f"{REPAIR_API}/api/evaluate")
+            r = client.get(f"{REPAIR_API}/api/evaluate", headers=AUTH_HEADERS)
             assert r.status_code == 200
             data = r.json()
             assert "success_rate_pct" in data

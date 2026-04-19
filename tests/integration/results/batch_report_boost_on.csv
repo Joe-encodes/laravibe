@@ -1,6 +1,6 @@
 case_id,status,iterations,mutation_score,duration_s,submission_id,ai_model,use_boost,use_mutation,timestamp
-case-001,failed,7,,369.76,b92218b4-f433-433b-987b-9b462a7a37cd,qwen3-max,True,True,2026-04-14T23:09:11.058116+00:00
-case-002,failed,7,,299.14,f48b2c77-13ad-4e77-b552-097b9b5be05b,qwen3-max,True,True,2026-04-14T23:09:11.058116+00:00
-case-003,failed,7,,444.69,1875e1e7-40c9-4461-9d90-c134c91ed8da,qwen3-max,True,True,2026-04-14T23:09:11.058116+00:00
-case-004,skipped,0,,0.0,,qwen3-max,True,True,2026-04-14T23:09:11.058116+00:00
-case-005,skipped,0,,0.0,,qwen3-max,True,True,2026-04-14T23:09:11.058116+00:00
+case-001,success,3,100.0,214.99,830ba34d-c276-4dc2-bbcf-69d9da2e197d,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
+case-002,success,3,100.0,118.16,efb45ee2-428c-4f8a-85cc-9a45781267f1,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
+case-003,failed,4,,265.02,f4a826e1-6cfd-45b0-84fa-bb719aa62162,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
+case-004,success,2,88.24,141.61,81dba472-0ed7-488f-9083-bfea0e761fa0,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
+case-005,failed,4,,231.7,751fbc35-3f5a-4219-98f9-7aa9df7c5c88,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00

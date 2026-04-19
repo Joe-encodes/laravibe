@@ -1,0 +1,92 @@
+name: CI — Laravel AI Repair Platform
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── 1. Python unit tests (fully mocked — no Docker, no real AI needed) ────────
+  unit-tests:
+    name: Python Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: repair-platform
+        run: pip install -r requirements-dev.txt
+
+      - name: Run pytest (mocked)
+        working-directory: repair-platform
+        env:
+          ANTHROPIC_API_KEY: "test-key"
+          DEFAULT_AI_PROVIDER: "anthropic"
+        run: pytest tests/ -v --ignore=tests/integration -x
+
+  # ── 2. Docker image build smoke test ─────────────────────────────────────────
+  docker-build:
+    name: Docker Image Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build laravel-sandbox image
+        working-directory: repair-platform
+        run: |
+          docker build -t laravel-sandbox:ci ./docker/laravel-sandbox/
+
+      - name: Smoke test — PHP version
+        run: docker run --rm laravel-sandbox:ci php -v
+
+      - name: Smoke test — Laravel version
+        run: docker run --rm laravel-sandbox:ci php artisan --version
+
+      - name: Smoke test — Pest version
+        run: docker run --rm laravel-sandbox:ci ./vendor/bin/pest --version
+
+      - name: Smoke test — Boost status
+        run: docker run --rm laravel-sandbox:ci php artisan boost:status || true
+
+  # ── 3. FastAPI startup test ───────────────────────────────────────────────────
+  api-startup:
+    name: FastAPI Startup Test
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        working-directory: repair-platform
+        run: pip install -r requirements.txt
+
+      - name: Start API and check /health
+        working-directory: repair-platform
+        env:
+          ANTHROPIC_API_KEY: "ci-key"
+          DEFAULT_AI_PROVIDER: "anthropic"
+        run: |
+          uvicorn api.main:app --port 8000 &
+          sleep 4
+          curl -f http://localhost:8000/api/health
+          curl -f http://localhost:8000/docs
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: repair-platform/tests/integration/results/
