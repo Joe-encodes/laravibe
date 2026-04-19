@@ -1,11 +1,12 @@
 import React from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Wrench, RefreshCw, Box } from 'lucide-react';
-import { INITIAL_PHP_CODE } from '../constants';
+import { INITIAL_PHP_CODE, MASTER_REPAIR_TOKEN } from '../constants';
 
 export const AnalyzerView: React.FC = () => {
   const navigate = useNavigate();
   const [code, setCode] = React.useState(INITIAL_PHP_CODE);
+  const [prompt, setPrompt] = React.useState("");
   const [maxIterations, setMaxIterations] = React.useState(7);
   const [useBoost, setUseBoost] = React.useState(true);
   const [useMutationGate, setUseMutationGate] = React.useState(true);
@@ -16,14 +17,19 @@ export const AnalyzerView: React.FC = () => {
     console.info('[LaraVibe] Initiating repair request...', { 
       max_iterations: maxIterations,
       use_boost: useBoost,
-      use_mutation_gate: useMutationGate
+      use_mutation_gate: useMutationGate,
+      has_prompt: !!prompt.trim()
     });
     try {
       const response = await fetch('/api/repair', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+        },
         body: JSON.stringify({ 
           code, 
+          prompt: prompt.trim() || null,
           max_iterations: maxIterations,
           use_boost: useBoost,
           use_mutation_gate: useMutationGate
@@ -52,13 +58,26 @@ export const AnalyzerView: React.FC = () => {
             {/* Removed non-functional buttons */}
           </div>
         </div>
-        <div className="flex-1 overflow-auto bg-surface-container-lowest p-4 font-mono text-sm leading-relaxed text-primary/80">
-          <textarea 
-            className="w-full h-full bg-transparent outline-none resize-none font-mono text-sm"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            spellCheck="false"
-          />
+        <div className="flex-1 flex flex-col gap-3 overflow-auto bg-surface-container-lowest p-4 font-mono text-sm leading-relaxed text-primary/80">
+          <div className="flex flex-col gap-1 shrink-0">
+            <label className="mono text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Dev Context / Instructions (Optional)</label>
+            <textarea 
+              className="w-full h-16 bg-surface-container-highest border border-outline-variant rounded p-2 text-xs text-primary/80 outline-none focus:border-primary transition-colors resize-none placeholder:text-outline-variant/50"
+              placeholder="e.g. Please use the Repository pattern, or ignore the missing interface..."
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              spellCheck="false"
+            />
+          </div>
+          <div className="flex-1 flex flex-col gap-1">
+            <label className="mono text-[10px] font-bold text-on-surface-variant uppercase tracking-wider">Broken Code</label>
+            <textarea 
+              className="w-full h-full bg-surface-container-highest border border-outline-variant rounded p-2 outline-none resize-none font-mono text-sm focus:border-primary transition-colors placeholder:text-outline-variant"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              spellCheck="false"
+            />
+          </div>
         </div>
         <div className="h-24 px-4 flex flex-col justify-center gap-3 border-t border-outline-variant bg-surface-container-low">
           <div className="flex items-center justify-between">

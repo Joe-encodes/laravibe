@@ -2,6 +2,7 @@ import React from 'react';
 import { Database, ShieldAlert, Cpu, Layers, Layout, ChevronRight, Activity, Terminal } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
+import { MASTER_REPAIR_TOKEN } from '../constants';
 
 export const AdminDashboardView: React.FC = () => {
   const [datasets, setDatasets] = React.useState<any[]>([]);
@@ -15,10 +16,13 @@ export const AdminDashboardView: React.FC = () => {
   const fetchData = async () => {
     setIsLoading(true);
     try {
+      const authHeaders = {
+        'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+      };
       const [dsRes, evalRes, statsRes] = await Promise.all([
-        fetch('/api/admin/training-dataset'),
-        fetch('/api/admin/evaluations'),
-        fetch('/api/stats')
+        fetch('/api/admin/training-dataset', { headers: authHeaders }),
+        fetch('/api/admin/evaluations', { headers: authHeaders }),
+        fetch('/api/stats', { headers: authHeaders })
       ]);
       if (dsRes.ok) setDatasets((await dsRes.json()).data);
       if (evalRes.ok) setEvaluations(await evalRes.json());
@@ -39,15 +43,20 @@ export const AdminDashboardView: React.FC = () => {
     let interval: any;
     if (isEvaluating) {
       interval = setInterval(async () => {
+        const authHeaders = {
+          'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+        };
         const [evalRes, statsRes] = await Promise.all([
-          fetch('/api/admin/evaluations'),
-          fetch('/api/stats')
+          fetch('/api/admin/evaluations', { headers: authHeaders }),
+          fetch('/api/stats', { headers: authHeaders })
         ]);
-        if (evalRes.ok) setEvaluations(await evalRes.json());
+        if (evalRes.ok) {
+           const evals = await evalRes.json();
+           setEvaluations(evals);
+           // If the active experiment ID is no longer 'running' in the backend evaluation_results (logic simplified)
+           // we would stop polling. For now we poll while the UI state isEvaluating is true.
+        }
         if (statsRes.ok) setStats(await statsRes.json());
-        
-        // If the latest evaluation in the list is completed, stop polling
-        // (Simplified check: if no 'running' status exists in any recent evaluation)
       }, 5000);
     }
     return () => clearInterval(interval);
@@ -56,12 +65,17 @@ export const AdminDashboardView: React.FC = () => {
   const handleRunBatch = async () => {
     setIsEvaluating(true);
     try {
-      const res = await fetch('/api/evaluate', { method: 'POST' });
+      const res = await fetch('/api/evaluate', { 
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+        }
+      });
       const data = await res.json();
       setActiveExpId(data.experiment_id);
       fetchData();
     } catch (e) {
-      alert('Failed to start evaluation');
+      console.error('Failed to start evaluation:', e);
       setIsEvaluating(false);
     }
   };

@@ -1,6 +1,9 @@
+import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
+import { Activity, Shield, Cpu, Zap, Search, History, ChevronDown, ArrowRight } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { MASTER_REPAIR_TOKEN } from '../constants';
 
 export const HistoryView: React.FC = () => {
   const navigate = useNavigate();
@@ -13,7 +16,11 @@ export const HistoryView: React.FC = () => {
     const fetchHistory = async () => {
       console.info('[LaraVibe] Fetching repair history...');
       try {
-        const response = await fetch('/api/history?limit=20');
+        const response = await fetch('/api/history?limit=20', {
+          headers: {
+            'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+          }
+        });
         console.info('[LaraVibe] History API Response:', { status: response.status });
         if (!response.ok) throw new Error('API Error');
         const data = await response.json();
@@ -26,7 +33,8 @@ export const HistoryView: React.FC = () => {
           status: sub.status === 'success' ? 'COMMITTED' : (sub.status === 'running' ? 'ACTIVE' : 'FAILED'),
           date: new Date(sub.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           fullDate: new Date(sub.created_at).toLocaleDateString(),
-          category: sub.category || 'GENERAL'
+          category: sub.category || 'GENERAL',
+          userPrompt: sub.user_prompt
         }));
         setHistoryItems(mapped);
       } catch (err) {
@@ -187,7 +195,12 @@ export const HistoryView: React.FC = () => {
                         <Zap className="w-3 h-3 text-secondary" />
                         {item.codeSnippet}
                       </div>
-                      <div className="mono text-[9px] text-outline uppercase tracking-widest font-black">Type: {item.category}</div>
+                      <div className="mono text-[9px] text-outline uppercase tracking-widest font-black italic truncate">Type: {item.category}</div>
+                      {item.userPrompt && (
+                        <div className="mono text-[9px] text-primary/70 uppercase tracking-widest font-bold truncate mt-1">
+                          Prompt: "{item.userPrompt}"
+                        </div>
+                      )}
                     </div>
                   </div>
 
