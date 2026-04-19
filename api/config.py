@@ -14,6 +14,13 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # ── Security ─────────────────────────────────────────────────────────────
+    # Master token for simple "Option A" authentication
+    master_repair_token: str = "change-me-in-production"
+    jwt_secret_key: str = "super-secret-key-change-me"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60 * 24  # 1 day
+
     # ── AI Provider ──────────────────────────────────────────────────────────
     # Free providers (recommended)
     dashscope_api_key: str = ""              # bailian.console.aliyun.com — 1M free tokens
@@ -38,7 +45,7 @@ class Settings(BaseSettings):
     container_cpu_limit: float = 0.5
     container_pid_limit: int = 256            # tinker + composer need many child processes
     container_timeout_seconds: int = 180      # WSL filesystem is slow for composer ops
-    max_iterations: int = 7
+    max_iterations: int = 4
 
     # ── App ───────────────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/repair.db"
@@ -49,13 +56,7 @@ class Settings(BaseSettings):
     # ── Mutation Gate ─────────────────────────────────────────────────────────
     mutation_score_threshold: int = 80       # pest --mutate must score >= this %
 
-    # ── Sandbox DB/Cache (passed into each Docker container) ─────────────────
-    sandbox_db_host: str = "mysql"
-    sandbox_db_port: int = 3306
-    sandbox_db_database: str = "laravel"
-    sandbox_db_username: str = "laravel"
-    sandbox_db_password: str = "secret"
-    sandbox_redis_host: str = "redis"
+
 
 
 @lru_cache

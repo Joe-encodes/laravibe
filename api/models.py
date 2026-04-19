@@ -28,6 +28,7 @@ class Submission(Base):
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
     original_code: Mapped[str] = mapped_column(Text, nullable=False)
+    user_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending"
     )  # pending | running | success | failed
@@ -68,3 +69,20 @@ class Iteration(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
     submission: Mapped["Submission"] = relationship("Submission", back_populates="iterations")
+
+
+class RepairSummary(Base):
+    """
+    Stores successful repairs (Phase 7).
+    When a future defect exhibits the same error_type, we retrieve
+    relevant summaries to show the AI how this error was fixed before.
+    """
+    __tablename__ = "repair_summaries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    error_type: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    diagnosis: Mapped[str] = mapped_column(Text, nullable=False)
+    fix_applied: Mapped[str] = mapped_column(Text, nullable=False)
+    what_did_not_work: Mapped[str | None] = mapped_column(Text, nullable=True)
+    iterations_needed: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
