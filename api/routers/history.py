@@ -8,7 +8,7 @@ from sqlalchemy import select, desc
 
 from api.database import get_db
 from api.models import Submission
-from api.schemas import HistoryItem, SubmissionOut
+from api.schemas import HistoryItem, SubmissionResponse
 
 router = APIRouter(prefix="/api", tags=["history"])
 
@@ -27,7 +27,7 @@ async def get_history(
     return result.scalars().all()
 
 
-@router.get("/history/{submission_id}", response_model=SubmissionOut)
+@router.get("/history/{submission_id}", response_model=SubmissionResponse)
 async def get_history_detail(
     submission_id: str,
     db: AsyncSession = Depends(get_db),

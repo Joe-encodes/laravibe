@@ -13,12 +13,16 @@ from sqlalchemy.orm import selectinload
 
 from api.database import get_db
 from api.models import Submission, Iteration
+from api.services.auth_service import get_current_user
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
 @router.get("/summary")
-async def get_stats_summary(db: AsyncSession = Depends(get_db)):
+async def get_stats_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """
     Returns high-level research metrics grouped by category.
     Includes success rates and average iterations per error type.
@@ -59,7 +63,10 @@ async def get_stats_summary(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/efficiency")
-async def get_efficiency_trends(db: AsyncSession = Depends(get_db)):
+async def get_efficiency_trends(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """
     Returns time-period based efficiency gains.
     Groups submissions by date to show if the system is getting faster/better.
@@ -92,7 +99,10 @@ async def get_efficiency_trends(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/export")
-async def export_research_data(db: AsyncSession = Depends(get_db)):
+async def export_research_data(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     """
     Exports the complete history in a research-friendly CSV format.
     Includes categories, experiment IDs, and mutation scores.
@@ -134,3 +144,40 @@ async def export_research_data(db: AsyncSession = Depends(get_db)):
     response = Response(content=output.getvalue(), media_type="text/csv")
     response.headers["Content-Disposition"] = f"attachment; filename=repair_research_{datetime.now().strftime('%Y%m%d')}.csv"
     return response
+@router.get("/")
+async def get_unified_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Unified endpoint for the frontend dashboard.
+    Aggregates overall success rates, averages, and counts.
+    """
+    summary = await get_stats_summary(db)
+    
+    # Calculate global averages
+    avg_metrics = await db.execute(
+        select(
+            func.avg(Submission.total_iterations),
+            func.avg(Iteration.mutation_score)
+        ).join(Iteration, Submission.id == Iteration.submission_id)
+        .where(Submission.status == 'success')
+    )
+    avg_row = avg_metrics.first()
+    
+    avg_iterations = float(avg_row[0] or 0) if avg_row else 0.0
+    avg_mutation_score = float(avg_row[1] or 0) if avg_row else 0.0
+    
+    # Global success rate
+    total = sum(summary["overall"].values())
+    success_count = summary["overall"].get("success", 0)
+    global_success_rate = (success_count / total * 100) if total > 0 else 0.0
+
+    return {
+        "global_success_rate": global_success_rate,
+        "avg_iterations": avg_iterations,
+        "avg_mutation_score": avg_mutation_score,
+        "total_repairs": total,
+        "categories": summary["categories"],
+        "status_distribution": summary["overall"]
+    }
