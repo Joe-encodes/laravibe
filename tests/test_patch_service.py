@@ -11,54 +11,37 @@ def _patch(action="replace", target=None, replacement="", filename=None):
     return PatchSpec(action=action, target=target, replacement=replacement, filename=filename)
 
 
-class TestReplace:
-    def test_simple_replace(self):
+class TestFullReplace:
+    def test_full_replace_success(self):
         code = "<?php\necho 'hello';\n"
-        patch = _patch("replace", target="echo 'hello';", replacement="echo 'world';")
+        patch = _patch("full_replace", replacement="<?php\necho 'world';\n")
         result = apply(code, patch)
         assert "echo 'world';" in result
         assert "echo 'hello';" not in result
 
-    def test_replace_strips_markdown_fences(self):
+    def test_full_replace_empty_raises(self):
+        patch = _patch("full_replace", replacement="")
+        with pytest.raises(PatchApplicationError, match="replacement content is empty"):
+            apply("<?php echo 'hi';", patch)
+
+    def test_full_replace_strips_markdown_fences(self):
         code = "<?php\nfunction old() {}\n"
-        patch = _patch("replace", target="function old() {}", replacement="```php\nfunction new() {}\n```")
+        patch = _patch("full_replace", replacement="```php\n<?php\nfunction new() {}\n```")
         result = apply(code, patch)
         assert "function new() {}" in result
         assert "```" not in result
 
-    def test_replace_target_not_found_raises(self):
-        code = "<?php echo 'hi';"
-        patch = _patch("replace", target="echo 'bye';", replacement="echo 'replaced';")
-        with pytest.raises(PatchApplicationError, match="not found"):
-            apply(code, patch)
 
-    def test_replace_no_target_raises(self):
-        patch = _patch("replace", target=None, replacement="something")
-        with pytest.raises(PatchApplicationError, match="no 'target'"):
-            apply("<?php echo 'hi';", patch)
+class TestLegacyActions:
+    def test_replace_raises_error(self):
+        patch = _patch("replace", target="x", replacement="y")
+        with pytest.raises(PatchApplicationError, match="no longer permitted"):
+            apply("<?php", patch)
 
-    def test_only_first_occurrence_replaced(self):
-        code = "<?php\necho 'x';\necho 'x';\n"
-        patch = _patch("replace", target="echo 'x';", replacement="echo 'y';")
-        result = apply(code, patch)
-        assert result.count("echo 'y';") == 1
-        assert result.count("echo 'x';") == 1
-
-
-class TestAppend:
-    def test_append_adds_to_end(self):
-        code = "<?php\nclass Foo {}"
-        patch = _patch("append", replacement="// appended")
-        result = apply(code, patch)
-        assert result.endswith("// appended\n")
-        assert "class Foo {}" in result
-
-    def test_append_strips_fences(self):
-        code = "<?php\n"
-        patch = _patch("append", replacement="```\n// new line\n```")
-        result = apply(code, patch)
-        assert "// new line" in result
-        assert "```" not in result
+    def test_append_raises_error(self):
+        patch = _patch("append", replacement="y")
+        with pytest.raises(PatchApplicationError, match="no longer permitted"):
+            apply("<?php", patch)
 
 
 class TestCreateFile:

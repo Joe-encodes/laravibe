@@ -29,16 +29,42 @@ def _make_exec(stdout="", stderr="", exit_code=0, duration_ms=50):
     return ExecResult(stdout=stdout, stderr=stderr, exit_code=exit_code, duration_ms=duration_ms)
 
 
-def _make_ai_resp(action="replace", target="<?php", diagnosis="missing import"):
+def _make_ai_resp(action="full_replace", target="<?php", diagnosis="missing import"):
     from api.services.ai_service import AIRepairResponse, PatchSpec
     return AIRepairResponse(
+        thought_process="I am thinking",
         diagnosis=diagnosis,
         fix_description="Added missing use statement",
         patches=[PatchSpec(action=action, target=target, replacement="<?php\nuse App\\Models\\Product;", filename=None)],
         pest_test="it('works', fn() => expect(true)->toBeTrue());",
         raw=json.dumps({"diagnosis": diagnosis, "fix_description": "fix", "patches": [], "pest_test": ""}),
         prompt="system prompt",
+        model_used="mocked-model",
     )
+
+
+def _make_role_mocks(ai_resp):
+    plan_mock = MagicMock()
+    plan_mock.model_used = "mocked"
+    plan_mock.data = {"error_classification": {"primary": "test"}, "plan_confidence": 0.9}
+    plan_mock.raw = "plan"
+
+    verify_mock = MagicMock()
+    verify_mock.verdict = "APPROVED"
+    verify_mock.approved_plan = plan_mock.data
+    verify_mock.corrections_made = []
+
+    exec_mock = MagicMock()
+    exec_mock.model_used = "mocked"
+    exec_mock.response = ai_resp
+
+    review_mock = MagicMock()
+    review_mock.verdict = "APPROVED"
+    review_mock.validated_output = ai_resp
+    review_mock.repairs_made = []
+    review_mock.model_used = "mocked"
+
+    return plan_mock, verify_mock, exec_mock, review_mock
 
 
 def _make_class_info():
@@ -143,6 +169,8 @@ class TestRepairLoopFailed:
         ai_resp = _make_ai_resp()
         boost_ctx = json.dumps({"schema_info": "", "docs_excerpts": [], "component_type": "model"})
 
+        plan_mock, verify_mock, exec_mock, review_mock = _make_role_mocks(ai_resp)
+
         with (
             patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
             patch("api.services.repair_service.docker_service.ping", AsyncMock(return_value=True)),
@@ -153,7 +181,10 @@ class TestRepairLoopFailed:
             patch("api.services.repair_service.sandbox_service.reinject_files", AsyncMock()),
             patch("api.services.repair_service.sandbox_service.inject_pest_test", AsyncMock()),
             patch("api.services.repair_service.boost_service.query_context", AsyncMock(return_value=boost_ctx)),
-            patch("api.services.repair_service.ai_service.get_repair", AsyncMock(return_value=ai_resp)),
+            patch("api.services.repair_service.get_plan", AsyncMock(return_value=plan_mock)),
+            patch("api.services.repair_service.verify_plan", AsyncMock(return_value=verify_mock)),
+            patch("api.services.repair_service.execute_plan", AsyncMock(return_value=exec_mock)),
+            patch("api.services.repair_service.review_output", AsyncMock(return_value=review_mock)),
         ):
             events = await _collect(
                 run_repair_loop("test-sub-id", "<?php class Broken {}", mock_db, max_iterations=2)
@@ -188,7 +219,7 @@ class TestRepairLoopMutationWeak:
         pest_count = [0]
 
         async def mock_execute(container, cmd, timeout=None, user=None):
-            if "php -l" in cmd:
+            if "php -l /submitted/code.php" in cmd:
                 iteration_count[0] += 1
                 return lint_ok if iteration_count[0] < 3 else lint_fail
             return lint_ok
@@ -196,6 +227,8 @@ class TestRepairLoopMutationWeak:
         async def mock_run_pest_test(container):
             pest_count[0] += 1
             return pest_fail if pest_count[0] == 1 else pest_ok
+
+        plan_mock, verify_mock, exec_mock, review_mock = _make_role_mocks(ai_resp)
 
         with (
             patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
@@ -212,7 +245,10 @@ class TestRepairLoopMutationWeak:
             patch("api.services.repair_service.sandbox_service.run_pest_test", mock_run_pest_test),
             patch("api.services.repair_service.sandbox_service.run_mutation_test", AsyncMock(return_value=mock_mut_weak)),
             patch("api.services.repair_service.boost_service.query_context", AsyncMock(return_value=boost_ctx)),
-            patch("api.services.repair_service.ai_service.get_repair", AsyncMock(return_value=ai_resp)),
+            patch("api.services.repair_service.get_plan", AsyncMock(return_value=plan_mock)),
+            patch("api.services.repair_service.verify_plan", AsyncMock(return_value=verify_mock)),
+            patch("api.services.repair_service.execute_plan", AsyncMock(return_value=exec_mock)),
+            patch("api.services.repair_service.review_output", AsyncMock(return_value=review_mock)),
             patch("api.services.repair_service.context_service.retrieve_similar_repairs", AsyncMock(return_value="")),
         ):
             events = await _collect(
@@ -222,3 +258,47 @@ class TestRepairLoopMutationWeak:
         mutation_events = [e for e in events if e["event"] == "mutation_result"]
         assert len(mutation_events) >= 1
         assert mutation_events[0]["data"]["passed"] is False
+
+
+@pytest.mark.asyncio
+class TestRepairLoopPhpGate:
+    async def test_rejects_invalid_ai_created_php_before_apply(self, mock_db, mock_submission):
+        lint_fail = _make_exec(stdout="Parse error: bad token", exit_code=255)
+        ai_resp = _make_ai_resp(action="create_file", target="app/Models/Product.php", diagnosis="bad php")
+        ai_resp.patches[0].filename = "app/Models/Product.php"
+        ai_resp.patches[0].replacement = "<?php\\nclass Product { \\\\ bad }"
+
+        plan_mock, verify_mock, exec_mock, review_mock = _make_role_mocks(ai_resp)
+
+        call_count = [0]
+        async def mock_execute(container, cmd, timeout=None, user=None):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return _make_exec(stdout="No syntax errors detected", exit_code=0)
+            return lint_fail
+
+        with (
+            patch("api.services.repair_service.docker_service.create_container", AsyncMock(return_value=MagicMock())),
+            patch("api.services.repair_service.docker_service.ping", AsyncMock(return_value=True)),
+            patch("api.services.repair_service.docker_service.copy_code", AsyncMock()),
+            patch("api.services.repair_service.docker_service.copy_file", AsyncMock()),
+            patch("api.services.repair_service.docker_service.execute", mock_execute),
+            patch("api.services.repair_service.docker_service.destroy", AsyncMock()),
+            patch("api.services.repair_service.sandbox_service.setup_sqlite", AsyncMock()),
+            patch("api.services.repair_service.sandbox_service.detect_class_info", AsyncMock(return_value=_make_class_info())),
+            patch("api.services.repair_service.sandbox_service.place_code_in_laravel", AsyncMock(return_value=_make_exec(stdout="CLASS_OK", exit_code=0))),
+            patch("api.services.repair_service.sandbox_service.scaffold_route", AsyncMock()),
+            patch("api.services.repair_service.sandbox_service.run_pest_test", AsyncMock(return_value=_make_exec(stdout="fail", exit_code=1))),
+            patch("api.services.repair_service.sandbox_service.capture_laravel_log", AsyncMock(return_value="")),
+            patch("api.services.repair_service.boost_service.query_context", AsyncMock(return_value=json.dumps({"schema_info": "", "docs_excerpts": [], "component_type": "model"}))),
+            patch("api.services.repair_service.get_plan", AsyncMock(return_value=plan_mock)),
+            patch("api.services.repair_service.verify_plan", AsyncMock(return_value=verify_mock)),
+            patch("api.services.repair_service.execute_plan", AsyncMock(return_value=exec_mock)),
+            patch("api.services.repair_service.review_output", AsyncMock(return_value=review_mock)),
+            patch("api.services.repair_service.context_service.retrieve_similar_repairs", AsyncMock(return_value="")),
+        ):
+            events = await _collect(run_repair_loop("test-sub-id", "<?php", mock_db, max_iterations=1))
+
+        rendered = json.dumps(events)
+        assert "Patch failed" in rendered
+        assert "AI_OUTPUT_INVALID_PHP" in rendered
