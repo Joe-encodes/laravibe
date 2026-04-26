@@ -2,6 +2,19 @@ import logging
 import logging.handlers
 import pathlib
 import sys
+from contextvars import ContextVar
+
+_submission_id_ctx: ContextVar[str] = ContextVar("submission_id", default="Global")
+
+
+def set_submission_id(value: str):
+    """Bind submission id to current async context."""
+    return _submission_id_ctx.set(value)
+
+
+def reset_submission_id(token) -> None:
+    """Reset submission id context for current async task."""
+    _submission_id_ctx.reset(token)
 
 def setup_logging(debug: bool = False):
     """
@@ -23,6 +36,13 @@ def setup_logging(debug: bool = False):
                 record.submission_id = "Global"
             return super().format(record)
 
+    class SubmissionContextFilter(logging.Filter):
+        def filter(self, record):
+            if not hasattr(record, "submission_id"):
+                val = _submission_id_ctx.get()
+                record.submission_id = str(val) if val is not None else "Global"
+            return True
+
     formatter = ContextFormatter(log_format)
 
     # 2. Handlers
@@ -30,6 +50,7 @@ def setup_logging(debug: bool = False):
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
+    console_handler.addFilter(SubmissionContextFilter())
 
     # Rotating file handler (10MB per file, keep 5 backups)
     file_handler = logging.handlers.RotatingFileHandler(
@@ -37,6 +58,7 @@ def setup_logging(debug: bool = False):
     )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(logging.DEBUG)  # Always log DEBUG to file for audits
+    file_handler.addFilter(SubmissionContextFilter())
 
     # 3. Configure root logger
     root_logger = logging.getLogger()

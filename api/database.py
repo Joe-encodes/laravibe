@@ -3,6 +3,7 @@ api/database.py — Async SQLAlchemy setup with aiosqlite.
 Creates tables on startup. Use get_db() as FastAPI dependency.
 """
 from pathlib import Path
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -32,9 +33,22 @@ class Base(DeclarativeBase):
 
 
 async def create_tables() -> None:
-    """Create all tables. Called once at FastAPI startup."""
+    """Create all tables and apply any additive schema migrations.
+    Called once at FastAPI startup.
+    """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Safe additive migrations: add columns that may not exist in older DBs.
+        # SQLite does not support IF NOT EXISTS on ALTER TABLE, so we catch the error.
+        migrations = [
+            "ALTER TABLE iterations ADD COLUMN ai_model_used VARCHAR(100)",
+            "ALTER TABLE repair_summaries ADD COLUMN what_did_not_work TEXT",
+        ]
+        for sql in migrations:
+            try:
+                await conn.execute(text(sql))
+            except Exception:
+                pass  # Column already exists — safe to ignore
 
 
 async def get_db():

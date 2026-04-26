@@ -55,6 +55,13 @@ class Settings(BaseSettings):
 
     # ── Mutation Gate ─────────────────────────────────────────────────────────
     mutation_score_threshold: int = 80       # pest --mutate must score >= this %
+    mutation_timeout_seconds: int = 120      # timeout for pest --mutate
+
+    # ── Role Pipeline ─────────────────────────────────────────────────────────
+    # Set USE_ROLE_PIPELINE=true in .env to activate the 4-role
+    # Planner → Verifier → Executor → Reviewer cycle.
+    # When false, the system falls back to the single get_repair() call (legacy mode).
+    use_role_pipeline: bool = False
 
 
 
