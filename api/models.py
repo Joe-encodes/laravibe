@@ -60,6 +60,11 @@ class Iteration(Base):
     boost_context: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     ai_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_model_used: Mapped[str | None] = mapped_column(String(100), nullable=True)  # legacy single-model field
+    # Role pipeline model tracking (populated when USE_ROLE_PIPELINE=true)
+    planner_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    executor_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reviewer_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     patch_applied: Mapped[str | None] = mapped_column(Text, nullable=True)
     pest_test_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     pest_test_result: Mapped[str | None] = mapped_column(Text, nullable=True)

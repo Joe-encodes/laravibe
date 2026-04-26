@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "laravel-ai-repair": {
-      "command": "python",
-      "args": ["-m", "mcp.server"],
+      "command": "venv/bin/python",
+      "args": ["mcp/server.py"],
       "env": {
         "REPAIR_API_URL": "http://localhost:8000"
       }
