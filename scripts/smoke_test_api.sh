@@ -13,7 +13,7 @@ echo ""
 
 # 1. Health Target
 echo "🟢 1. Checking /api/health ..."
-HEALTH_RESP=$(curl -s "$APP_URL/api/health")
+HEALTH_RESP=$(curl -sL "$APP_URL/api/health")
 if echo "$HEALTH_RESP" | grep -q '"status":"ok"'; then
     echo "   ✅ Health OK"
 else
@@ -24,7 +24,7 @@ fi
 
 # 2. Stats Target
 echo "📊 2. Checking /api/stats (Needs Authentication) ..."
-STATS_RESP=$(curl -s "$APP_URL/api/stats" -H "Authorization: Bearer $MASTER_TOKEN")
+STATS_RESP=$(curl -sL "$APP_URL/api/stats" -H "Authorization: Bearer $MASTER_TOKEN")
 if echo "$STATS_RESP" | grep -q 'total_repairs'; then
     echo "   ✅ Stats OK"
 else
@@ -35,8 +35,8 @@ fi
 
 # 3. History Target
 echo "📜 3. Checking /api/history (Needs Authentication) ..."
-HISTORY_RESP=$(curl -s "$APP_URL/api/history?limit=1" -H "Authorization: Bearer $MASTER_TOKEN")
-if echo "$HISTORY_RESP" | grep -q 'items'; then
+HISTORY_RESP=$(curl -sL "$APP_URL/api/history?limit=1" -H "Authorization: Bearer $MASTER_TOKEN")
+if echo "$HISTORY_RESP" | grep -q '"id"'; then
     echo "   ✅ History OK"
 else
     echo "   ❌ History failed. Check auth token or DB."
@@ -56,7 +56,7 @@ PAYLOAD=$(cat << 'EOF'
 EOF
 )
 
-REPAIR_RESP=$(curl -s -X POST "$APP_URL/api/repair" \
+REPAIR_RESP=$(curl -sL -X POST "$APP_URL/api/repair" \
      -H "Authorization: Bearer $MASTER_TOKEN" \
      -H "Content-Type: application/json" \
      -d "$PAYLOAD")
