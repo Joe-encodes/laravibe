@@ -38,7 +38,7 @@ The **Laravel AI Repair Platform** automatically fixes broken AI-generated PHP/L
 - **Pest test generation** (validates the fix works)
 - **Mutation testing gate** (`pest --mutate ≥ 80%` — ensures the fix is robust)
 
-It repeats up to **7 times** until the code is clean, or reports failure.
+It repeats up to **4 times** (configurable via `MAX_ITERATIONS` env var) until the code is clean, or reports failure.
 
 ### Core Mechanic in One Diagram
 
@@ -87,97 +87,70 @@ The browser connects to `GET /api/repair/{id}/stream` via `EventSource` (Server-
 
 ---
 
-## 3. The 7-Step Iterative Repair Loop
+## 3. The 13-Step Iterative Repair Loop
 
-![Iterative Repair Loop](C:\Users\ESTHER\.gemini\antigravity\brain\42fcb583-c7f5-4f26-950b-54824fad965d\repair_loop_diagram_1775660337398.png)
+### Design Change: Single Persistent Container (V2)
+
+The container is created **once before the loop** and destroyed in `finally`. It persists across all iterations — files created by `create_file` patches in iteration N are naturally present in iteration N+1. No re-injection needed.
 
 ### Step-by-Step Breakdown
 
-Each iteration (up to 7) follows this exact sequence implemented in [`api/services/repair_service.py`](api/services/repair_service.py):
+Each iteration (up to `MAX_ITERATIONS`, default 4) follows this exact sequence in [`api/services/repair_service.py`](api/services/repair_service.py):
 
-#### Step 1 — Spin Container
-```python
-container = await docker_service.create_container()
-```
-A fresh `laravel-sandbox:latest` Docker container is created with:
-- `--network=none` (zero internet access)
-- `--memory=512m`
-- `--pids-limit=64`
-- `--cpu=0.5`
+#### Step 1 — Copy Code
+The current code string is written to `/submitted/code.php` via in-memory tar archive.
 
-#### Step 2 — Copy Code
-```python
-await docker_service.copy_code(container, current_code)
-```
-The submitted PHP code is written to `/submitted/code.php` inside the container using an in-memory tar archive (no temp files on host).
+#### Step 2 — PHP Lint Gate
+`php -l /submitted/code.php` — fastest syntax check. Fails immediately on syntax errors without entering Laravel.
 
-#### Step 2b — Re-inject Dependency Files
-If a previous iteration created new files (e.g. a missing `Product.php` Model), they are re-injected into every new container. This prevents the same "class not found" error re-appearing on subsequent iterations.
+#### Step 3 — Detect Class Info
+`sandbox_service.detect_class_info()` parses namespace and classname via PHP one-liners, builds `ClassInfo` (FQCN, PSR-4 destination path, route resource name).
 
-#### Step 3 — Execute Code
-Execution runs in three sub-steps:
-1. **PHP lint**: `php -l /submitted/code.php` — fastest possible syntax check
-2. **Namespace/class detection**: `grep` extracts the class name and namespace
-3. **Laravel Tinker validation**: `php artisan tinker --execute="class_exists(...)"` — loads the class through Laravel's full autoloader to catch runtime resolution failures
+#### Step 4 — Place Code in Laravel
+`sandbox_service.place_code_in_laravel()` copies to the PSR-4 path, runs `composer dump-autoload`, validates via Tinker. `CLASS_OK` sentinel confirms success.
 
-Success is detected by the `CLASS_OK` string in the Tinker output.
+#### Step 5 — Scaffold Route (BEFORE Boost)
+`sandbox_service.scaffold_route()` appends `Route::apiResource()` to `routes/api.php` idempotently. Runs **before** Boost so `route:list` sees the new route in the context it feeds to the AI.
 
-#### Step 4 — Error Check & Pest
-If execution succeeds:
-- **Pest functional test** runs: `./vendor/bin/pest --filter=RepairTest`
-- If Pest passes → **Mutation gate**: `./vendor/bin/pest --mutate --coverage-pcov`
-- Mutation score is parsed by `_parse_mutation_score()` from the Pest output
+#### Step 6 — Query Boost Context
+`boost_service.query_context()` runs inside the container:
+- `boost:schema --format=json` → fallback `db:show --json`
+- `boost:docs --query=<component_type>` → supplementary
+- `route:list --json` + raw `routes/api.php` always appended
 
-#### Step 5 — Query Boost Context
-```python
-boost_ctx_json = await boost_service.query_context(container, error_text)
-```
-Two artisan commands run **inside the container**:
-- `php artisan boost:schema --format=text` — current DB schema
-- `php artisan boost:docs --query="<error_type>" --limit=3` — relevant Laravel docs
+Cache keyed by `SHA-256(submission_id + framework_version + component_type)`.
 
-Results are cached in-process by a SHA-256 hash of `(laravel_version, error_text[:500])`.
+#### Step 7 — Retrieve Similar Past Repairs
+`context_service.retrieve_similar_repairs()` scores the 200-item sliding window and injects the top-3 similar repairs (with dead-ends) into the prompt.
 
-#### Step 6 — Call AI
-```python
-ai_resp = await ai_service.get_repair(code, error, boost_context, iteration, previous_attempts)
-```
-The LLM receives the repair prompt (in [`api/prompts/repair_prompt.txt`](api/prompts/repair_prompt.txt)) which includes:
-- The broken code
-- Runtime error output
-- Laravel Boost context (schema + docs)
-- All previous repair attempts in this session
+#### Step 8 — Escalation Check
+`escalation_service.build_escalation_context()` evaluates 4 stuck-loop rules and injects corrective instructions if triggered.
 
-The AI responds with structured JSON:
-```json
-{
-  "diagnosis": "App\\Models\\Product class does not exist",
-  "fix_description": "Create the missing Product model with correct namespace",
-  "patch": {
-    "action": "create_file",
-    "target": null,
-    "replacement": "<?php\n\nnamespace App\\Models;\n...",
-    "filename": "App/Models/Product.php"
-  },
-  "pest_test": "<?php\ntest('Product model exists', fn() => ...);"
-}
-```
+#### Step 9 — Call AI
+`ai_service.get_repair()` assembles the prompt and calls the LLM via `ROTATION_CHAIN` (batch) or `FALLBACK_CHAIN` (single). Returns `AIRepairResponse` with `patches`, `pest_test`, `diagnosis`, `fix_description`, `model_used`.
 
-The `get_repair()` function retries up to **3 times** on malformed JSON (with exponential backoff via `tenacity`).
+#### Step 10 — Ensure `covers()` Directive
+`sandbox_service.ensure_covers_directive()` injects missing `use function Pest\Laravel\{...};` imports and a `covers(ClassName::class);` directive into the AI-generated test.
 
-#### Step 7 — Apply Patch
-The `patch_service.apply()` handles three action types:
+#### Step 11 — Apply Patches
+`patch_service.apply_all()` processes the `patches` list:
 
 | Action | What Happens |
 |--------|-------------|
-| `replace` | Finds exact `target` string in code and swaps it with `replacement` |
-| `append` | Appends `replacement` to end of current code |
-| `create_file` | Signals `repair_service` to write a new file at `patch.filename` inside the container |
+| `full_replace` | Replaces entire submitted file content |
+| `create_file` | New file written to container + `composer dump-autoload` + `php artisan migrate` |
+| `replace` / `append` | **Banned** — raises `PatchApplicationError` immediately |
 
-The updated `current_code` (or new file) flows into the next iteration.
+Forbidden filenames (`routes/api.php` etc.) are blocked silently.
+
+#### Step 12 — Run Pest Test
+System baseline test (`getJson('/api/{resource}')->assertSuccessful()`) runs first. On failure, `capture_laravel_log()` fetches the last 40 lines of Laravel's log to surface the real PHP exception.
+
+#### Step 13 — Run Mutation Gate
+Only runs if an AI-generated test is present. Test is linted first (`php -l`). Then `./vendor/bin/pest --mutate`. Score classified as: `covers_missing` → fail, `dependency_failure` → fail, `infra_failure` → soft-pass, real score → compare to threshold.
 
 #### Iteration Result
-Each iteration result is saved as an `Iteration` row in SQLite and an SSE event is streamed to the frontend. The loop either exits with `status=success` or exhausts all iterations and exits with `status=failed`.
+Each iteration saved as an `Iteration` row (including partial `mutation_score` even on fails). SSE `complete` event emitted on success or exhaustion.
 
 ---
 
@@ -194,24 +167,32 @@ repair-platform/
 │   ├── models.py                   ← ORM: Submission, Iteration tables
 │   ├── schemas.py                  ← Pydantic v2 request/response models
 │   │
+│   ├── logging_config.py            ← Unified console + rotating file handler (10 MB × 5 backups)
+│   ├── limiter.py                  ← slowapi rate limiter instance
 │   ├── prompts/
-│   │   ├── repair_prompt.txt       ← Main LLM repair prompt template
-│   │   └── pest_prompt.txt         ← Pest test generation prompt
+│   │   └── repair_prompt.md        ← Main LLM repair prompt template (Spatie guidelines included)
 │   │
 │   ├── routers/
 │   │   ├── __init__.py
 │   │   ├── health.py               ← GET /api/health
 │   │   ├── repair.py               ← POST /api/repair, GET /api/repair/{id}, SSE stream
 │   │   ├── history.py              ← GET /api/history
-│   │   └── evaluate.py             ← POST /api/evaluate (batch runs)
+│   │   ├── evaluate.py             ← POST /api/evaluate (batch runs)
+│   │   ├── stats.py                ← GET /api/stats (aggregate statistics)
+│   │   └── admin.py                ← DELETE /api/admin/submissions/{id}
 │   │
 │   └── services/
 │       ├── __init__.py
-│       ├── docker_service.py       ← Container lifecycle (create/copy/exec/destroy)
-│       ├── boost_service.py        ← Laravel Boost artisan commands + caching
-│       ├── ai_service.py           ← LLM routing (Gemini/Groq/Claude/GPT/DeepSeek/Ollama)
-│       ├── patch_service.py        ← Patch application (replace/append/create_file)
-│       └── repair_service.py       ← Main orchestration loop (the big one, 434 lines)
+│       ├── docker_service.py       ← Container lifecycle (create/copy/exec/destroy/ping)
+│       ├── sandbox_service.py      ← Laravel helpers (detect class, place code, Pest/mutate, covers)
+│       ├── boost_service.py        ← Boost artisan commands + score-based component detection + caching
+│       ├── ai_service.py           ← LLM routing (ROTATION_CHAIN + FALLBACK_CHAIN, 9 providers)
+│       ├── patch_service.py        ← Patch application (full_replace/create_file; replace/append banned)
+│       ├── escalation_service.py   ← 4-rule stuck loop detection + corrective prompt injection
+│       ├── context_service.py      ← 200-item sliding window memory (store + retrieve similar repairs)
+│       ├── evaluation_service.py   ← Batch evaluation orchestrator
+│       ├── auth_service.py         ← Bearer token validation
+│       └── repair_service.py       ← Main orchestration loop (413 lines)
 │
 ├── docker/
 │   ├── .dockerignore
@@ -364,18 +345,22 @@ CONTAINER_MEMORY_LIMIT=512m
 CONTAINER_CPU_LIMIT=0.5
 CONTAINER_PID_LIMIT=64
 CONTAINER_TIMEOUT_SECONDS=90
-MAX_ITERATIONS=7
+MAX_ITERATIONS=4
 ```
+
+> **Note:** `CONTAINER_TIMEOUT_SECONDS` governs general exec calls. The mutation test timeout is hardcoded at 120 s in `sandbox_service.py` and is not yet controlled by this setting.
 
 ### App Settings
 
 ```env
 DATABASE_URL=sqlite+aiosqlite:///./data/repair.db
 MAX_CODE_SIZE_KB=100
-SECRET_KEY=change-this-in-production
+REPAIR_TOKEN=change-me-in-production
 DEBUG=false
 MUTATION_SCORE_THRESHOLD=80
 ```
+
+> **`DEFAULT_AI_PROVIDER=fallback`** — uses `FALLBACK_CHAIN` for single submissions. During batch evaluation, `ROTATION_CHAIN` in `ai_service.py` overrides this entirely per iteration.
 
 > [!IMPORTANT]
 > Never commit `.env` — it is in `.gitignore`. Only `.env.example` (with placeholder values) is tracked by git.
@@ -433,12 +418,26 @@ Ollama requires at least 8GB RAM. Useful for air-gapped environments.
 
 | Provider | `DEFAULT_AI_PROVIDER` | Recommended `AI_MODEL` |
 |---------|----------------------|------------------------|
-| Google Gemini | `gemini` | `gemini-2.5-flash` |
+| Nvidia NIM | `nvidia` | `Qwen/Qwen2.5-Coder-32B-Instruct` |
+| Dashscope (Alibaba) | `dashscope` | `deepseek-v3` |
 | Groq | `groq` | `llama-3.3-70b-versatile` |
+| Cerebras | `cerebras` | `llama-3.3-70b` |
+| Google Gemini | `gemini` | `gemini-2.5-flash` |
 | DeepSeek | `deepseek` | `deepseek-coder` |
 | Ollama | `ollama` | `qwen2.5-coder:7b` |
 | Anthropic | `anthropic` | `claude-sonnet-4-6` |
 | OpenAI | `openai` | `gpt-4o` |
+
+### Batch Evaluation: ROTATION_CHAIN
+
+During batch runs, `ROTATION_CHAIN` overrides `DEFAULT_AI_PROVIDER` per iteration:
+
+| Iteration | Provider | Model |
+|---|---|---|
+| 0 | nvidia | `Qwen/Qwen2.5-Coder-32B-Instruct` |
+| 1 | dashscope | `deepseek-v3` |
+| 2 | nvidia | `meta/llama-3.3-70b-instruct` |
+| 3 | gemini | `gemini-2.5-flash` |
 
 ---
 
@@ -693,27 +692,74 @@ The AI service:
 
 ---
 
+### `sandbox_service.py`
+
+Extracted from `repair_service.py`. Each function does one thing inside the container:
+
+| Function | Purpose |
+|---|---|
+| `detect_class_info()` | PHP one-liners parse namespace + classname; builds `ClassInfo` |
+| `setup_sqlite()` | Switches sandbox to SQLite (required under `--network=none`) |
+| `place_code_in_laravel()` | PSR-4 placement + Tinker validation + `CLASS_OK` sentinel |
+| `scaffold_route()` | Idempotent `Route::apiResource()` append to `routes/api.php` |
+| `generate_baseline_pest_test()` | System-controlled HTTP assertion (no AI involvement) |
+| `run_pest_test()` | `pest --filter=RepairTest --no-coverage` |
+| `capture_laravel_log()` | Last 40 lines of `storage/logs/laravel.log` on Pest failure |
+| `lint_test_file()` | `php -l RepairTest.php` before mutation gate |
+| `run_mutation_test()` | `pest --mutate`; classifies output into 4 categories |
+| `parse_mutation_score()` | 6-pattern regex with ANSI stripping; returns 0.0 on no match |
+| `ensure_covers_directive()` | Injects `covers()` + `use function Pest\Laravel\{...};` |
+
+---
+
 ### `patch_service.py`
 
-Three patch actions:
+Two permitted patch actions:
 
 ```
-replace     → current_code.replace(patch.target, patch.replacement, 1)
-append      → current_code + "\n\n" + patch.replacement
-create_file → signal to repair_service; new file written to container
+full_replace → replaces entire file content with replacement
+create_file  → signals loop to write new file; current_code unchanged
 ```
 
-All AI responses have markdown fences stripped via `strip_markdown_fences()` before applying — models often wrap code in ` ```php ` even when instructed not to.
+`replace` and `append` are **banned** — raise `PatchApplicationError` immediately.
+
+Forbidden filenames (`routes/api.php`, `routes/web.php`, etc.) are blocked silently — logged and skipped, not raised.
+
+`apply_all()` processes a list of `PatchSpec` objects and returns `ApplyAllResult(updated_code, created_files, actions_taken, skipped_forbidden)`.
+
+---
+
+### `escalation_service.py`
+
+4-rule stuck-loop detector evaluated after every failed iteration:
+1. **Repeated diagnoses** — fuzzy match ≥ 70% word overlap across last 2 attempts → forces different reasoning
+2. **Consecutive patch failures** → forces `full_replace`
+3. **`create_file` without fixing original** → demands `full_replace` of the original file
+4. **Dependency Guard** — same `create_file` path used more than once → forbids re-creating it
+
+---
+
+### `context_service.py`
+
+200-item `deque` sliding window. On success, `store_repair_summary()` persists a `RepairSummary` row and appends to the deque immediately. On each new repair, `retrieve_similar_repairs()` scores entries by `(similarity × 0.7 + efficiency × 0.3)` and injects top-3 as prompt addendum.
 
 ---
 
 ### `repair_service.py`
 
-The orchestrator — 434 lines. Key design decisions:
+The orchestrator — 413 lines. Key design decisions:
 
-**`supplementary_files` dict** tracks files created by `create_file` patches. Since each iteration uses a fresh container, any new files from iteration N would be lost in iteration N+1. The dict re-injects them with `cat << 'EOF'` heredoc commands.
+**Single persistent container** — created once before the iteration loop, destroyed in `finally`. Files from `create_file` patches persist naturally across iterations.
 
-**Mutation score acceptance override:** If the previous repair action was `create_file` (e.g. created a new empty Model) and mutation score is 0%, the system accepts it as genuine success. Empty boilerplate files have no mutations to test — treating 0% as failure would cause infinite loops.
+**`_normalize_code()`** — strips CRLF and UTF-8 BOM from submitted code on first receipt.
+
+**`_normalize_migration()`** — converts named-class migrations to anonymous class syntax to prevent `Cannot redeclare class` errors.
+
+**`iter_mutation_score` tracking** — partial mutation score stored on every iteration (even fails) so the research dataset has full score distributions.
+
+**Laravel log capture** — on Pest failure, last 40 lines of `laravel.log` appended to `error_text` to surface the real PHP exception.
+
+**Mutation score acceptance override** — if previous action was `create_file` and mutation score is 0%, system accepts it as success (boilerplate files have no mutations to test).
 
 ---
 
@@ -726,12 +772,17 @@ SQLite database at `data/repair.db` (created automatically on first startup).
 | Column | Type | Description |
 |--------|------|-------------|
 | `id` | UUID string | Primary key |
+| `user_id` | String (nullable) | Optional — for multi-user deployments |
 | `created_at` | DateTime (UTC) | Submission timestamp |
 | `original_code` | Text | Raw broken code as submitted |
+| `user_prompt` | Text (nullable) | Optional extra instructions from user |
 | `status` | String(20) | `pending` → `running` → `success` / `failed` |
 | `total_iterations` | Integer | How many iterations ran |
 | `final_code` | Text (nullable) | Repaired code if status=success |
 | `error_summary` | Text (nullable) | Human-readable failure reason |
+| `case_id` | String (nullable) | Batch evaluation case identifier |
+| `category` | String (nullable) | Error category (e.g. `missing_model`) |
+| `experiment_id` | String (nullable) | Batch run identifier |
 
 ### `iterations` Table
 
@@ -742,17 +793,32 @@ SQLite database at `data/repair.db` (created automatically on first startup).
 | `iteration_num` | Integer | 0-indexed iteration number |
 | `code_input` | Text | Code version at start of this iteration |
 | `execution_output` | Text | Container stdout |
-| `error_logs` | Text | Combined stderr + stdout from failed exec |
+| `error_logs` | Text | Combined stderr + stdout + Laravel log tail |
 | `boost_context` | Text | JSON from boost_service |
 | `ai_prompt` | Text | Full prompt sent to LLM |
 | `ai_response` | Text | Raw LLM response JSON |
-| `patch_applied` | Text | String repr of PatchSpec |
-| `pest_test_code` | Text | Pest test code from AI |
+| `ai_model_used` | String(100) | e.g. `"nvidia/Qwen/Qwen2.5-Coder-32B-Instruct"` |
+| `patch_applied` | Text | Stringified list of `PatchSpec` objects |
+| `pest_test_code` | Text | AI-generated Pest test code |
 | `pest_test_result` | Text | Pest output |
-| `mutation_score` | Float | Score% from pest --mutate |
+| `mutation_score` | Float | Score% from pest --mutate (NULL if gate not reached) |
 | `status` | String(20) | `failed` or `success` |
-| `duration_ms` | Integer | Iteration wall time in milliseconds |
+| `duration_ms` | Integer | Iteration wall time in ms |
 | `created_at` | DateTime (UTC) | Iteration start time |
+
+### `repair_summaries` Table
+
+Populated only on successful repairs. Feeds the sliding window memory.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | UUID string | Primary key |
+| `error_type` | String(255) | Extracted error signature (canonical key) |
+| `diagnosis` | Text | What the AI diagnosed |
+| `fix_applied` | Text | What fix was applied |
+| `what_did_not_work` | Text (nullable) | Dead-end approaches from previous iterations |
+| `iterations_needed` | Integer | How many iterations the repair took |
+| `created_at` | DateTime (UTC) | When this repair was recorded |
 
 ---
 
@@ -1009,11 +1075,17 @@ The loop continues and the AI receives the error on its next attempt.
 
 Delete `data/repair.db` to start fresh — the tables are recreated automatically on next startup.
 
-### Dump last iteration logs
+### Logs show `[Global]` instead of the submission ID
+
+This is a known open issue. Only `repair_service.py` uses a `LoggerAdapter` with `submission_id`. All other services (`boost_service`, `docker_service`, `sandbox_service`, `patch_service`) use plain `logger.info()` which defaults to `"Global"` in the log format. You cannot currently filter the log file by a specific submission ID. Workaround: filter by the submission UUID string using `grep`:
 
 ```bash
-python3 scripts/dump_last_log.py
+grep "<your-submission-uuid>" data/logs/repair_platform.log
 ```
+
+### Mutation score shows 0% with no explanation
+
+The mutation score parser (`parse_mutation_score`) returns `0.0` silently when none of its 6 regex patterns match the Pest output. This is a known gap — no SSE event is emitted. Check the raw `ai_response` in the DB or the log file for the full Pest output to diagnose.
 
 ---
 
