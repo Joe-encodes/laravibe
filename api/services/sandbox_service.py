@@ -57,13 +57,19 @@ async def detect_class_info(container) -> ClassInfo:
     Parse namespace and classname from /submitted/code.php inside the container.
     Returns a ClassInfo with all derived paths and identifiers.
     """
-    # Detect namespace
+    # 0. Pre-lint: if the submitted code has fatal syntax errors, we can't reliably detect info.
+    lint = await docker_service.execute(container, "php -l /submitted/code.php 2>&1", timeout=10)
+    if lint.exit_code != 0:
+        logger.warning(f"[Sandbox] Submitted code has syntax errors, class detection may be unreliable: {lint.stdout}")
+
+    # 1. Detect namespace
     detect_ns_cmd = (
         "php -r '$c = @file_get_contents(\"/submitted/code.php\"); "
         "if (preg_match(\"/namespace\\\\s+([^;\\\\s]+)/s\", $c, $m)) echo trim($m[1]);'"
     )
     ns_result = await docker_service.execute(container, detect_ns_cmd, timeout=5)
-    namespace = ns_result.stdout.strip().replace("\\", "/") or "App/Http/Controllers"
+    # Standardize namespaces: single backslashes for PHP, forward slashes for internal paths
+    namespace = ns_result.stdout.strip().replace("\\\\", "\\").replace("\\", "/") or "App/Http/Controllers"
 
     # Detect classname
     detect_cls_cmd = (
@@ -72,6 +78,9 @@ async def detect_class_info(container) -> ClassInfo:
     )
     cls_result = await docker_service.execute(container, detect_cls_cmd, timeout=5)
     classname = cls_result.stdout.strip() or "SubmittedClass"
+
+    if not classname.replace("_", "").isalnum():
+        logger.warning(f"[Sandbox] Suspect classname detected: {classname}")
 
     # Derive PSR-4 destination path
     clean_ns = namespace.replace("/", "\\").strip("\\")
@@ -83,9 +92,9 @@ async def detect_class_info(container) -> ClassInfo:
     dest_dir = f"/var/www/sandbox/{dest_namespace}"
     dest_file = f"{dest_dir}/{classname}.php"
 
-    # Build FQCN for PHP class_exists() — needs double-escaped backslashes
-    php_ns = namespace.replace("/", "\\\\")
-    fqcn = f"{php_ns}\\\\{classname}"
+    # Build standard FQCN with single backslashes
+    php_ns = namespace.replace("/", "\\")
+    fqcn = f"{php_ns}\\{classname}".replace("\\\\", "\\")
 
     # Pluralized route resource name (UserController → users)
     resource_name = re.sub(r'Controller$', '', classname, flags=re.IGNORECASE).lower()
@@ -99,7 +108,7 @@ async def detect_class_info(container) -> ClassInfo:
         fqcn=fqcn,
         route_resource=route_resource,
     )
-    logger.info(f"[Sandbox] Detected: namespace={namespace} class={classname} dest={dest_file}")
+    logger.info(f"[Sandbox] Detected: namespace={namespace} class={classname} dest={dest_file} fqcn={fqcn}")
     return info
 
 
@@ -143,7 +152,8 @@ async def place_code_in_laravel(
     """
     safe_dest_dir = shlex.quote(str(__import__('pathlib').Path(class_info.dest_file).parent))
     safe_dest_file = shlex.quote(class_info.dest_file)
-    safe_fqcn = class_info.fqcn.replace("'", "\\'")
+    # Double-escape the backslashes for use inside PHP single quotes
+    safe_fqcn = class_info.fqcn.replace("\\", "\\\\").replace("'", "\\'")
 
     # Base64-encode Tinker PHP script to avoid shell quoting issues
     tinker_code = (
@@ -204,7 +214,7 @@ if (strpos($content, '{classname}::class') === false) {{
     await docker_service.copy_file(container, "/tmp/scaffold.php", php_script)
     cmd = "php /tmp/scaffold.php && cd /var/www/sandbox && php artisan route:clear > /dev/null 2>&1"
     
-    result = await docker_service.execute(container, cmd, timeout=20, user="root")
+    result = await docker_service.execute(container, cmd, timeout=20)
     if result.exit_code != 0:
         logger.error(f"[Scaffold] Failed with exit {result.exit_code}: {result.stderr}")
     else:
@@ -251,7 +261,7 @@ async def run_mutation_test(container) -> MutationResult:
     result = await docker_service.execute(
         container,
         "./vendor/bin/pest --mutate 2>&1",
-        timeout=120,
+        timeout=settings.mutation_timeout_seconds,
     )
 
     output = result.stdout
@@ -296,11 +306,18 @@ async def run_mutation_test(container) -> MutationResult:
             duration_ms=result.duration_ms, soft_pass=True,
         )
 
-    score = parse_mutation_score(output)
+    score, matched_pattern = parse_mutation_score_details(output)
+    output_str = output if len(output) <= 2000 else "...[TRUNCATED]...\n" + output[-2000:]
+    if matched_pattern is None:
+        output_str = (
+            "MUTATION_PARSE_WARNING: Could not extract a mutation score from pest output; "
+            "defaulting to 0.0.\n\n"
+            f"{output_str}"
+        )
     return MutationResult(
         score=score,
         passed=score >= settings.mutation_score_threshold,
-        output=output[:1000],
+        output=output_str,
         duration_ms=result.duration_ms,
     )
 
@@ -316,29 +333,39 @@ def parse_mutation_score(output: str) -> float:
       "mutation score: 80"
     Returns 0.0 if no pattern matches (fail-safe).
     """
-    # Strip ANSI escape codes
+    score, _matched_pattern = parse_mutation_score_details(output)
+    return score
+
+
+def parse_mutation_score_details(output: str) -> tuple[float, str | None]:
+    """Parse mutation score and return the matched regex pattern if any."""
     ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
     clean_output = ansi_escape.sub('', output)
-    
+
     logger.debug(f"[MutationParser] clean output:\n{clean_output[:800]}")
 
     patterns = [
         r"killed\s*\((\d+(?:\.\d+)?)%\)",           # "12 killed (80.0%)"
         r"mutations?\s*:\s*(\d+(?:\.\d+)?)\s*%",    # "Mutations: 78.3%"
-        r"(\d+(?:\.\d+)?)\s*%\s*mutation\s+score",   # "80% mutation score"
-        r"mutation\s+score[:\s]+(\d+(?:\.\d+)?)",    # "mutation score: 80"
-        r"score[:\s]+(\d+(?:\.\d+)?)\s*%",           # "Score: 80.00%"
-        r"(\d+(?:\.\d+)?)\s*%\s*scored",             # "80.0% scored"
+        r"(\d+(?:\.\d+)?)\s*%\s*mutation\s+score",  # "80% mutation score"
+        r"mutation\s+score[:\s]+(\d+(?:\.\d+)?)",   # "mutation score: 80"
+        r"score[:\s]+(\d+(?:\.\d+)?)\s*%",          # "Score: 80.00%"
+        r"(\d+(?:\.\d+)?)\s*%\s*scored",            # "80.0% scored"
+        r"Coverage:\s*(\d+(?:\.\d+)?)%",            # Fallback if AI used coverage by mistake
     ]
     for pattern in patterns:
         match = re.search(pattern, clean_output, re.IGNORECASE)
         if match:
-            score = float(match.group(1))
-            logger.info(f"[MutationParser] Matched '{pattern}' → score={score}%")
-            return score
+            try:
+                score = float(match.group(1))
+                logger.info(f"[MutationParser] Matched '{pattern}' -> score={score}%")
+                return score, pattern
+            except ValueError:
+                continue
 
-    logger.warning(f"[MutationParser] No pattern matched. Returning 0.0. Snippet: {output[:200]!r}")
-    return 0.0
+    # Log more context on failure to help debug missing patterns
+    logger.warning(f"[MutationParser] No pattern matched. Snippet: {clean_output[:400]!r}")
+    return 0.0, None
 
 
 # ── File Injection Helpers ────────────────────────────────────────────────────
@@ -398,39 +425,48 @@ def generate_baseline_pest_test(class_info: ClassInfo) -> str:
 def ensure_covers_directive(pest_test: str, current_code: str, fqcn_from_sandbox: str | None) -> str:
     """
     Ensure all programmatic requirements for a Pest test in this sandbox are met.
+
+    Injects:
+      1. Missing `use function Pest\\Laravel\\{...};` imports.
+      2. Missing `use App\\Models\\X;` for any `X::factory()` call that has no
+         corresponding use statement — these are always Eloquent models, never facades.
+      3. Missing `covers(ClassName::class);` directive for mutation testing.
     """
     if not pest_test:
         return pest_test
 
     # 1. Inject required function imports
-    # We use a comprehensive list of common Pest/Laravel helpers
     functions = ["getJson", "postJson", "putJson", "patchJson", "deleteJson", "get", "post", "put", "patch", "delete"]
     if "actingAs(" in pest_test:
         functions.append("actingAs")
-    
-    import_line = f"use function Pest\\Laravel\\{{{', '.join(functions)}}};"
+
+    import_lines = "\n".join(f"use function Pest\\Laravel\\{func};" for func in functions)
 
     if "use function Pest\\Laravel" not in pest_test:
-        if "<?php\n" in pest_test:
-            pest_test = pest_test.replace("<?php\n", f"<?php\n{import_line}\n", 1)
-        elif "<?php" in pest_test:
-            pest_test = pest_test.replace("<?php", f"<?php\n{import_line}\n", 1)
+        php_tag_match = re.search(r'<\?php\b', pest_test)
+        if php_tag_match:
+            insert_pos = php_tag_match.end()
+            pest_test = pest_test[:insert_pos] + "\n" + import_lines + "\n" + pest_test[insert_pos:].lstrip()
         else:
-            pest_test = f"<?php\n{import_line}\n" + pest_test
+            pest_test = f"<?php\n{import_lines}\n" + pest_test
 
-    # 2. Automatically inject missing Model imports
-    # Look for words starting with uppercase (potential models)
-    potential_models = set(re.findall(r'\b([A-Z][a-zA-Z0-9_]*)::', pest_test))
-    for model in potential_models:
-        if model != "Route" and model != "Schema" and model != "DB" and f"use App\\Models\\{model};" not in pest_test:
-            # We boldly assume it's an App\Models\ model if it's not a common facade
-            model_import = f"use App\\Models\\{model};\n"
-            if "<?php\n" in pest_test:
-                pest_test = pest_test.replace("<?php\n", f"<?php\n{model_import}", 1)
+    # 1b. Inject missing `use App\Models\X` for any `X::factory()` calls.
+    # Safe to auto-inject for ::factory() because only Eloquent models have factory() methods.
+    factory_classes = re.findall(r'\b([A-Z][A-Za-z0-9_]*)::factory\(', pest_test)
+    for class_name in set(factory_classes):
+        full_use = f"use App\\Models\\{class_name};"
+        if full_use not in pest_test:
+            # Insert immediately after the opening <?php tag (handles spaces or newlines)
+            php_tag_match = re.search(r'<\?php\b', pest_test)
+            if php_tag_match:
+                insert_pos = php_tag_match.end()
+                # Use lstrip to remove existing whitespace before adding our own, ensuring clean formatting
+                pest_test = pest_test[:insert_pos] + "\n" + full_use + "\n" + pest_test[insert_pos:].lstrip()
             else:
-                pest_test = pest_test.replace("<?php", f"<?php\n{model_import}", 1)
+                pest_test = f"<?php\n{full_use}\n" + pest_test
+            logger.debug(f"[covers] Auto-injected missing import: {full_use}")
 
-    # 3. Inject covers() if missing
+    # 2. Inject covers() if missing
     if "covers(" in pest_test:
         return pest_test
 
@@ -443,24 +479,31 @@ def ensure_covers_directive(pest_test: str, current_code: str, fqcn_from_sandbox
             class_name = class_match.group(1)
             ns_match = re.search(r'namespace\s+([^;]+);', current_code)
             if ns_match:
-                target_fqcn = f"\\\\{ns_match.group(1).strip()}\\\\{class_name}"
+                target_fqcn = f"{ns_match.group(1).strip()}\\{class_name}"
             else:
-                target_fqcn = f"\\\\{class_name}"
+                target_fqcn = class_name
 
     if not target_fqcn:
         return pest_test
 
+    # Ensure single backslashes and absolute FQCN for PHP ::class reference
+    target_fqcn = target_fqcn.replace("\\\\", "\\")
     absolute_fqcn = target_fqcn if target_fqcn.startswith("\\") else "\\" + target_fqcn
     covers_line = f"covers({absolute_fqcn}::class);\n"
 
-    # Insert covers directly after the PHP opening tag and imports
+    # Insert covers() after ALL `use` statements (both `use function` and `use ClassName`)
+    # so it always lands before the first test() call.
     lines = pest_test.split('\n')
+    insert_at = 1  # fallback: after <?php
     for i, line in enumerate(lines):
-        if line.startswith("use function") or "<?php" in line:
+        stripped = line.strip()
+        if stripped.startswith('<?php') or stripped.startswith('use '):
+            insert_at = i + 1
             continue
-        lines.insert(i, covers_line)
+        if stripped == '' and i < len(lines) - 1:
+            # Allow blank lines between imports
+            continue
         break
-    else:
-        lines.insert(1, covers_line)
+    lines.insert(insert_at, covers_line)
 
     return '\n'.join(lines)

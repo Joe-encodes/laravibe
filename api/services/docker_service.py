@@ -52,8 +52,6 @@ def _get_client() -> docker.DockerClient:
 
 async def is_alive(container) -> bool:
     """Check if container is still running and healthy."""
-    loop = asyncio.get_event_loop()
-
     def _check():
         try:
             container.reload()  # refresh container state
@@ -61,7 +59,7 @@ async def is_alive(container) -> bool:
         except Exception:
             return False
 
-    return await loop.run_in_executor(None, _check)
+    return await asyncio.to_thread(_check)
 
 
 async def ping(container, retries: int = 3) -> bool:
@@ -88,8 +86,6 @@ async def create_container() -> docker.models.containers.Container:
     """
     Spin up a fresh laravel-sandbox container with strict resource limits.
     """
-    loop = asyncio.get_event_loop()
-
     def _create():
         client = _get_client()
         container = client.containers.run(
@@ -107,7 +103,7 @@ async def create_container() -> docker.models.containers.Container:
         logger.info(f"Container created: {container.short_id}")
         return container
 
-    return await loop.run_in_executor(None, _create)
+    return await asyncio.to_thread(_create)
 
 
 async def copy_code(container, code: str) -> None:
@@ -117,8 +113,6 @@ async def copy_code(container, code: str) -> None:
 
 async def copy_file(container, dest_path: str, content: str) -> None:
     """Write `content` to `dest_path` inside the running container."""
-    loop = asyncio.get_event_loop()
-
     def _copy():
         import pathlib
         # Build an in-memory tar archive
@@ -139,7 +133,7 @@ async def copy_file(container, dest_path: str, content: str) -> None:
         container.put_archive(dest_dir, tar_buffer.read())
         logger.debug(f"[{container.short_id}] File copied to {dest_path}")
 
-    await loop.run_in_executor(None, _copy)
+    await asyncio.to_thread(_copy)
 
 
 async def execute(
@@ -153,7 +147,6 @@ async def execute(
     Returns ExecResult with stdout, stderr, exit_code, duration_ms.
     Kills container after `timeout` seconds if it hangs.
     """
-    loop = asyncio.get_event_loop()
     timeout = timeout or settings.container_timeout_seconds
     start = time.monotonic()
 
@@ -174,7 +167,7 @@ async def execute(
 
     try:
         stdout, stderr, exit_code = await asyncio.wait_for(
-            loop.run_in_executor(None, _exec),
+            asyncio.to_thread(_exec),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
@@ -213,8 +206,6 @@ async def execute(
 
 async def destroy(container) -> None:
     """Stop and remove the container. Always call this in a finally block."""
-    loop = asyncio.get_event_loop()
-
     def _destroy():
         try:
             container.stop(timeout=3)
@@ -228,4 +219,4 @@ async def destroy(container) -> None:
         except Exception as exc:
             logger.warning(f"Could not remove container {container.short_id}: {exc}")
 
-    return await loop.run_in_executor(None, _destroy)
+    return await asyncio.to_thread(_destroy)
