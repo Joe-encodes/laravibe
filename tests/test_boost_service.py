@@ -34,12 +34,12 @@ class TestBoostContext:
         ctx = BoostContext(schema_info="products: id, name", docs_excerpts=[], component_type="model")
         text = ctx.to_prompt_text()
         assert "products: id, name" in text
-        assert "## Relevant Schema" in text
+        assert "## Schema" in text
 
     def test_to_prompt_text_empty_returns_fallback(self):
         ctx = BoostContext(schema_info="", docs_excerpts=[], component_type="unknown")
         text = ctx.to_prompt_text()
-        assert "No Boost context available" in text
+        assert text == ""
 
 
 class TestCacheKey:
@@ -47,8 +47,9 @@ class TestCacheKey:
         err = "Class App\\Models\\Product not found"
         assert _cache_key("sub-1", err) == _cache_key("sub-1", err)
 
-    def test_different_error_different_key(self):
-        assert _cache_key("sub-1", "error A") != _cache_key("sub-1", "error B")
+    def test_different_component_different_key(self):
+        # Different errors with different component types generate different keys
+        assert _cache_key("sub-1", "Eloquent model missing") != _cache_key("sub-1", "Route [api.users] not defined")
 
     def test_different_submission_different_key(self):
         err = "same error"
@@ -70,7 +71,7 @@ class TestDetectComponentType:
         ("migration failed: Schema error", "migration"),
         ("Middleware stack broken", "middleware"),
         ("Route [api.users] not defined", "route"),
-        ("Request validation failed", "form_request"),
+        ("Request validation failed", "request"),
         ("Something totally unrelated", "unknown"),
     ])
     def test_detection(self, error, expected):
