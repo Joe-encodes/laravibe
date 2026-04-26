@@ -1,8 +1,6 @@
 """
 api/services/boost_service.py — Query Laravel Boost inside a running sandbox container.
-
-Copilot addition: cache results by (framework_version, error_signature_hash)
-to avoid redundant exec calls and reduce cost on repeated errors.
+Caches context by (submission_id, component_type) to avoid redundant Docker exec calls.
 """
 import hashlib
 import json
@@ -35,21 +33,84 @@ class BoostContext:
             component_type="unknown",
         )
 
+    # Tables we always skip — they're present on every fresh Laravel install
+    # and carry zero signal for the repair AI.
+    _NOISE_TABLES = frozenset({
+        "cache", "cache_locks", "failed_jobs", "job_batches", "jobs",
+        "migrations", "password_reset_tokens", "sessions",
+    })
+
+    # Internal Laravel/Boost routes that waste tokens with no repair value
+    _NOISE_ROUTE_NAMES = frozenset({
+        "boost.browser-logs", "sanctum.csrf-cookie",
+        "storage.local", "storage.local.upload",
+        "generated::q40m02NKXo0PsxAY", "generated::wQn8ABLpjElQZ9Aw",
+    })
+
     def to_prompt_text(self) -> str:
         parts = []
+
         if self.schema_info:
-            parts.append(f"## Relevant Schema\n{self.schema_info}")
+            try:
+                schema_data = json.loads(self.schema_info)
+                app_tables = [
+                    t for t in schema_data.get("tables", [])
+                    if t.get("table") not in BoostContext._NOISE_TABLES
+                ]
+                if app_tables:
+                    table_lines = ", ".join(
+                        f"{t['table']} ({', '.join(c['name'] for c in t.get('columns', []))})"
+                        if t.get('columns') else t['table']
+                        for t in app_tables
+                    )
+                    parts.append(f"## App Tables\n{table_lines}")
+            except (json.JSONDecodeError, TypeError):
+                if self.schema_info and self.schema_info != "No schema info available.":
+                    parts.append(f"## Schema\n{self.schema_info}")
+
         if self.docs_excerpts:
-            parts.append("## Laravel Docs Excerpts\n" + "\n---\n".join(self.docs_excerpts))
+            filtered_routes = []
+            for excerpt in self.docs_excerpts:
+                try:
+                    routes = json.loads(excerpt) if isinstance(excerpt, str) else excerpt
+                    if isinstance(routes, list):
+                        app_routes = [
+                            r for r in routes
+                            if r.get("name") not in BoostContext._NOISE_ROUTE_NAMES
+                            and not (r.get("uri", "").startswith("_boost"))
+                            and not (r.get("uri", "").startswith("storage"))
+                            and not (r.get("uri", "").startswith("sanctum"))
+                        ]
+                        for r in app_routes:
+                            filtered_routes.append(
+                                f"  {r.get('method','?')} /{r.get('uri','?')} "
+                                f"→ {r.get('action','?')}"
+                            )
+                    else:
+                        filtered_routes.append(str(excerpt))
+                except (json.JSONDecodeError, TypeError):
+                    filtered_routes.append(str(excerpt))
+
+            if filtered_routes:
+                parts.append("## Registered Routes\n" + "\n".join(filtered_routes))
+
         if self.component_type and self.component_type != "unknown":
-            parts.append(f"## Detected Component Type\n{self.component_type}")
-        return "\n\n".join(parts) if parts else "No Boost context available."
+            parts.append(f"## Component: {self.component_type}")
+
+        return "\n\n".join(parts) if parts else ""
 
 
 def _cache_key(submission_id: str, error_text: str, framework_version: str = "laravel-12") -> str:
-    """Cache keyed by (submission_id, framework_version, error_signature_hash) to prevent
-    cross-submission contamination in batch runs."""
-    sig = hashlib.sha256(f"{submission_id}:{framework_version}:{error_text[:500]}".encode()).hexdigest()
+    """Cache keyed by (submission_id, component_type, framework_version).
+
+    Using component_type (not the full error text) means that if two different
+    iterations in the same submission both fail on a 'model' error, we hit the
+    cache on the second call instead of re-executing boost:schema inside Docker.
+    """
+    component_type = _detect_component_type(error_text)
+    sig = hashlib.sha256(
+        f"{submission_id}:{framework_version}:{component_type}".encode()
+    ).hexdigest()
     return sig
 
 
@@ -165,18 +226,50 @@ async def _fetch_boost_context(container, error_text: str) -> BoostContext:
 
 
 def _detect_component_type(error_text: str) -> str:
-    """Heuristic: detect what kind of Laravel component the error relates to."""
+    """
+    Score-based component type detection.
+
+    Uses a scoring dict instead of an if/elif priority chain to handle
+    stack traces that mention multiple component types (e.g. a controller
+    error caused by a missing model would contain both 'controller' and 'model').
+    The component with the highest score wins; ties go to the more specific type.
+    """
     text = error_text.lower()
-    if "controller" in text:
-        return "controller"
-    if "model" in text or "eloquent" in text:
-        return "model"
-    if "migration" in text or "schema" in text:
-        return "migration"
-    if "middleware" in text:
-        return "middleware"
-    if "route" in text:
-        return "route"
-    if "request" in text or "validation" in text:
-        return "form_request"
-    return "unknown"
+
+    scores: dict[str, int] = {
+        "controller": 0,
+        "model": 0,
+        "migration": 0,
+        "middleware": 0,
+        "route": 0,
+        "request": 0,
+    }
+
+    # Controller keywords
+    if "controller" in text:       scores["controller"] += 1
+    if "http/controllers" in text: scores["controller"] += 2
+
+    # Model keywords — weighted higher because 'Class X not found' always means a dep issue
+    if "model" in text:            scores["model"] += 1
+    if "eloquent" in text:         scores["model"] += 2
+    if "app\\models" in text:      scores["model"] += 3
+    if "class\"" in text and "not found" in text: scores["model"] += 2
+
+    # Migration keywords
+    if "migration" in text:        scores["migration"] += 2
+    if "schema" in text:           scores["migration"] += 1
+    if "no such table" in text:    scores["migration"] += 3
+
+    # Middleware
+    if "middleware" in text:        scores["middleware"] += 2
+
+    # Route
+    if "route" in text:             scores["route"] += 1
+    if "routenotfound" in text:     scores["route"] += 3
+
+    # Form request / validation
+    if "request" in text or "validation" in text: scores["request"] += 1
+    if "formrequest" in text:                      scores["request"] += 2
+
+    best = max(scores, key=lambda k: scores[k])
+    return best if scores[best] > 0 else "unknown"

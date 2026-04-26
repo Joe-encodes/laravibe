@@ -124,7 +124,13 @@ def _write_csv_report(results: list[EvaluateCaseResult], manifest: dict):
     report_csv = pathlib.Path(output_config.get("report_csv", str(results_dir / "batch_report.csv")))
     results_dir.mkdir(parents=True, exist_ok=True)
 
-    ai_model = manifest.get("ai_model", "unknown")
+    from api.config import get_settings as _get_settings
+    _settings = _get_settings()
+    # Write the actual runtime provider/model, not the manifest literal.
+    # The manifest ai_model field is documentation; the real model used is in settings.
+    runtime_ai_provider = _settings.default_ai_provider
+    manifest_model_hint = manifest.get("ai_model", "unknown")
+    ai_model_label = f"{runtime_ai_provider}:{manifest_model_hint}" if runtime_ai_provider != "fallback" else f"fallback-chain:{manifest_model_hint}"
     use_boost = manifest.get("use_boost_context", True)
     use_mutation_gate = manifest.get("use_mutation_gate", True)
     
@@ -139,6 +145,6 @@ def _write_csv_report(results: list[EvaluateCaseResult], manifest: dict):
         for r in results:
             writer.writerow([
                 r.sample_file, r.status, r.iterations, r.mutation_score, 
-                r.duration_s, r.submission_id, ai_model, 
+                r.duration_s, r.submission_id, ai_model_label, 
                 use_boost, use_mutation_gate, ts
             ])

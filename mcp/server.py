@@ -28,7 +28,8 @@ HEADERS = {
 
 mcp = FastMCP(
     "Laravel AI Repair",
-    description=(
+    dependencies=["httpx"],
+    instructions=(
         "Submits broken PHP/Laravel REST API code to the AI repair platform. "
         "Returns the repaired code, diagnosis, and iteration count."
     ),
