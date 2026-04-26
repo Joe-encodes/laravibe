@@ -42,8 +42,8 @@ def strip_markdown_fences(code: str) -> str:
     """Strip ```php ... ``` or ``` ... ``` wrappers from AI output."""
     code = code.strip()
     # Match optional language identifier after opening fence
-    pattern = r"^```[\w]*\n?(.*?)\n?```$"
-    match = re.fullmatch(pattern, code, flags=re.DOTALL)
+    pattern = r"```[\w]*\n?(.*?)\n?```"
+    match = re.search(pattern, code, flags=re.DOTALL)
     if match:
         return match.group(1)
     return code
@@ -104,27 +104,11 @@ def apply(current_code: str, patch: PatchSpec) -> str:
         logger.debug(f"[Patch] full_replace: rewrote entire file ({len(replacement)} chars)")
         return replacement
 
-    elif patch.action == "replace":
-        logger.warning("[Patch] AI used deprecated 'replace' action — should be 'full_replace'")
-        if not patch.target:
-            raise PatchApplicationError("Patch action='replace' but no 'target' string provided.")
-
-        if patch.target not in current_code:
-            raise PatchApplicationError(
-                f"Patch target not found in code.\n"
-                f"Target (first 200 chars): {patch.target[:200]!r}\n"
-                f"Code (first 200 chars): {current_code[:200]!r}"
-            )
-
-        new_code = current_code.replace(patch.target, replacement, 1)
-        logger.debug(f"[Patch] replace: swapped {len(patch.target)} chars → {len(replacement)} chars")
-        return new_code
-
-    elif patch.action == "append":
-        logger.warning("[Patch] AI used deprecated 'append' action — should be 'full_replace'")
-        new_code = current_code.rstrip() + "\n\n" + replacement + "\n"
-        logger.debug(f"[Patch] append: added {len(replacement)} chars to end")
-        return new_code
+    elif patch.action in ("replace", "append"):
+        raise PatchApplicationError(
+            f"Patch action='{patch.action}' is no longer permitted. "
+            f"Use 'full_replace' for the submitted file or 'create_file' for new dependency files."
+        )
 
     elif patch.action == "create_file":
         if not patch.filename:

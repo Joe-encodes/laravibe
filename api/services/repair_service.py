@@ -19,9 +19,16 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import get_settings
+from api.logging_config import set_submission_id, reset_submission_id
 from api.models import Submission, Iteration
-from api.services import docker_service, boost_service, ai_service, patch_service, sandbox_service, escalation_service, context_service
-from api.services.ai_service import AIServiceError
+from api.services import (
+    ai_service, patch_service, docker_service, sandbox_service,
+    boost_service, context_service, escalation_service,
+)
+from api.services.ai_service import (
+    AIServiceError, AIRepairResponse,
+    get_plan, verify_plan, execute_plan, review_output,
+)
 from api.services.patch_service import PatchApplicationError, strip_markdown_fences, ApplyAllResult
 
 logger = logging.getLogger(__name__)
@@ -48,6 +55,55 @@ def _normalize_code(code: str) -> str:
     return result
 
 
+def _normalize_migration(content: str) -> str:
+    """
+    Normalize AI-generated migrations for sandbox safety:
+    1. Convert named-class migrations to anonymous class syntax.
+    2. Strip softDeletes() columns unless the original code uses SoftDeletes traits.
+       The AI hallucinates softDeletes() despite prompt bans; this causes fatal SQL
+       column-mismatch errors when the Model does not use the SoftDeletes trait.
+    """
+    # Strip any softDeletes() column definitions — the infra-level safety net.
+    # A line like: $table->softDeletes(); or $table->softDeletes('col', 0);
+    content = re.sub(r'[ \t]*\$table->softDeletes\([^)]*\);[ \t]*\n?', '', content)
+
+    # Skip further rewrite if already anonymous
+    if 'return new class' in content:
+        return content
+
+    # Match: `class SomeName extends Migration {`
+    named_class_pattern = re.compile(
+        r'^class\s+\w+\s+extends\s+Migration\s*\{',
+        re.MULTILINE
+    )
+    if not named_class_pattern.search(content):
+        return content
+
+    # Replace `class Foo extends Migration {` → `return new class extends Migration {`
+    content = named_class_pattern.sub('return new class extends Migration {', content)
+
+    # Replace the closing `}` (last one in the file) with `};`
+    last_brace = content.rfind('}')
+    if last_brace != -1:
+        content = content[:last_brace] + '};' + content[last_brace + 1:]
+
+    logger.debug("[Repair] Normalized named-class migration to anonymous class syntax.")
+    return content
+
+
+async def _lint_php_content(container, content: str, rel_hint: str) -> None:
+    """Lint generated PHP content before accepting AI patch output."""
+    if "<?php" not in content:
+        return
+    gate_path = "/tmp/ai_gate_candidate.php"
+    await docker_service.copy_file(container, gate_path, content)
+    lint_res = await docker_service.execute(container, f"php -l {gate_path} 2>&1", timeout=15)
+    if lint_res.exit_code != 0:
+        raise PatchApplicationError(
+            f"AI_OUTPUT_INVALID_PHP [{rel_hint}]: {lint_res.stdout or lint_res.stderr}"
+        )
+
+
 async def run_repair_loop(
     submission_id: str,
     code: str,
@@ -67,6 +123,7 @@ async def run_repair_loop(
     current_pest_test: str | None = None
     initial_error_text: str | None = None
 
+    submission_ctx_token = set_submission_id(submission_id)
     ctx_log = logging.LoggerAdapter(logger, {"submission_id": submission_id})
     ctx_log.info("Starting repair process")
 
@@ -92,9 +149,17 @@ async def run_repair_loop(
         yield _evt("log_line", msg="🗄️ Configuring SQLite...")
         await sandbox_service.setup_sqlite(container)
 
+        ai_resp = None
         for iteration_num in range(max_iter):
             iteration_id = str(uuid.uuid4())
             iter_start = time.monotonic()
+            error_text = ""
+            iter_mutation_score: float | None = None
+            patch_result: ApplyAllResult | None = None
+            exec_result = None
+            planner_model_used: str | None = None
+            executor_model_used: str | None = None
+            reviewer_model_used: str | None = None
             yield _evt("iteration_start", iteration=iteration_num + 1, max=max_iter)
 
             try:
@@ -116,6 +181,14 @@ async def run_repair_loop(
 
                 # ── 4. Test if code works ─────────────────────────────────────
                 if exec_result.exit_code == 0 and not exec_result.has_php_fatal:
+                    # Re-run dump-autoload right before Pest to ensure any Model/Factory files
+                    # created by the AI in the previous iteration are in the current classmap.
+                    # place_code_in_laravel already runs dump-autoload but artisan calls
+                    # (migrate, optimize:clear) can invalidate the bootstrap cache afterward.
+                    await docker_service.execute(
+                        container,
+                        "cd /var/www/sandbox && composer dump-autoload -q 2>&1",
+                    )
                     # Inject system-controlled baseline test as PRIMARY correctness gate.
                     baseline_test = sandbox_service.generate_baseline_pest_test(class_info)
                     await sandbox_service.inject_pest_test(container, baseline_test)
@@ -129,6 +202,7 @@ async def run_repair_loop(
                         # ── 4a. Mutation gate ──────────────────────────────────
                         is_genuine = True
                         mutation_score = None
+                        mut_output = ""
                         if use_mutation_gate:
                             # Require AI-generated test with covers() before running mutation gate.
                             if current_pest_test:
@@ -148,6 +222,7 @@ async def run_repair_loop(
                                     mut = await sandbox_service.run_mutation_test(container)
                                     mutation_score = mut.score
                                     is_genuine = mut.passed
+                                    mut_output = mut.output
                                     # Accept low mutation if last action was create_file
                                     if not is_genuine and previous_attempts and previous_attempts[-1].get("action") == "create_file":
                                         is_genuine = True
@@ -178,7 +253,11 @@ async def run_repair_loop(
 
                             await _save_iteration(db, iteration_id, submission_id, iteration_num,
                                 current_code, exec_result, pest_result.stdout, mutation_score, "success",
-                                int((time.monotonic() - iter_start) * 1000))
+                                int((time.monotonic() - iter_start) * 1000),
+                                ai_model_used=ai_resp.model_used if ai_resp and hasattr(ai_resp, 'model_used') else None,
+                                planner_model=planner_model_used,
+                                executor_model=executor_model_used,
+                                reviewer_model=reviewer_model_used)
                             submission.status = "success"
                             submission.final_code = current_code
                             submission.total_iterations = iteration_num + 1
@@ -187,11 +266,14 @@ async def run_repair_loop(
                                        iterations=iteration_num + 1, mutation_score=mutation_score)
                             return
 
-                        # Mutation too low
-                        error_text = (
-                            f"MUTATION_WEAK: score {mutation_score:.1f}% (need {settings.mutation_score_threshold}%). "
-                            f"Strengthen the implementation and make the Pest test more precise."
-                        )
+                        # Mutation too low — store partial score for research data
+                        iter_mutation_score = mutation_score
+                        if "TEST_SYNTAX_ERROR" not in error_text:
+                            error_text = (
+                                f"MUTATION_WEAK: score {mutation_score:.1f}% (need {settings.mutation_score_threshold}%). "
+                                f"Strengthen the implementation and make the Pest test more precise.\n\n"
+                                f"=== SURVIVED MUTATIONS (Fix your test to kill these) ===\n{mut_output}"
+                            )
                         if initial_error_text is None:
                             initial_error_text = error_text
                         yield _evt("log_line", msg=f"⚠️ Mutation {mutation_score:.1f}% too low.")
@@ -219,37 +301,155 @@ async def run_repair_loop(
                         initial_error_text = error_text
                     yield _evt("log_line", msg=f"❌ Execution error (exit={exec_result.exit_code})")
 
-                # ── 5. Boost context ──────────────────────────────────────────
+                # Boost context
                 boost_ctx_json = "{}"
+                boost_prompt_text = ""
                 if use_boost:
                     yield _evt("log_line", msg="Querying Boost context...")
                     boost_ctx_json = await boost_service.query_context(container, error_text, submission_id=submission_id)
-                    boost_ctx = json.loads(boost_ctx_json)
-                    yield _evt("boost_queried", schema=bool(boost_ctx.get("schema_info")),
-                               component_type=boost_ctx.get("component_type"))
+                    boost_ctx_data = json.loads(boost_ctx_json)
+                    boost_ctx_obj = boost_service.BoostContext(
+                        schema_info=boost_ctx_data.get("schema_info", ""),
+                        docs_excerpts=boost_ctx_data.get("docs_excerpts", []),
+                        component_type=boost_ctx_data.get("component_type", "unknown"),
+                    )
+                    boost_prompt_text = boost_ctx_obj.to_prompt_text()
+                    yield _evt("boost_queried", schema=bool(boost_ctx_data.get("schema_info")),
+                               component_type=boost_ctx_data.get("component_type"))
                 else:
                     yield _evt("log_line", msg="⏩ Boost disabled.")
 
-                # ── 6. Stuck-loop detection ───────────────────────────────────
+                # Stuck-loop detection
                 escalation_ctx = escalation_service.build_escalation_context(previous_attempts)
                 if escalation_ctx:
                     yield _evt("log_line", msg="⚠️ Stuck loop detected. Escalating AI prompt.")
 
-                # ── 7. Call AI ────────────────────────────────────────────────
+                # ── 7. Call AI (role pipeline OR legacy single call) ────────────
                 similar_repairs = ""
                 if initial_error_text:
                     similar_repairs = await context_service.retrieve_similar_repairs(db, initial_error_text)
 
                 yield _evt("ai_thinking", msg="Sending to AI...")
-                ctx_log.info(f"\n{'='*20} BOOST CONTEXT {'='*20}\n{boost_ctx_json}\n{'='*54}")
+                ctx_log.info(f"\n{'='*20} BOOST CONTEXT {'='*20}\n{boost_prompt_text or '(empty)'}\n{'='*54}")
+
                 try:
-                    ai_resp = await ai_service.get_repair(
-                        code=current_code, error=error_text, boost_context=boost_ctx_json,
-                        iteration=iteration_num, previous_attempts=previous_attempts,
-                        escalation_context=escalation_ctx, similar_past_repairs=similar_repairs,
-                        user_prompt=prompt
+                    # ── 7a. PLANNER ───────────────────────────────────────
+                    yield _evt("log_line", msg="🧠 Planner: analysing error...")
+                    plan_result = await get_plan(
+                        code=current_code, error=error_text,
+                        boost_context=boost_prompt_text,
+                        previous_attempts=previous_attempts,
+                        similar_past_repairs=similar_repairs,
                     )
-                    ctx_log.info(f"\n{'='*20} AI RESPONSE {'='*20}\n{ai_resp.raw}\n{'='*52}")
+                    planner_model_used = plan_result.model_used
+                    ctx_log.info(f"[Planner] {plan_result.data.get('error_classification')} confidence={plan_result.data.get('plan_confidence')}")
+
+                    # ── 7b. VERIFIER ──────────────────────────────────────
+                    yield _evt("log_line", msg="🔎 Verifier: checking plan...")
+                    verify_result = await verify_plan(
+                        code=current_code, error=error_text,
+                        boost_context=boost_prompt_text,
+                        planner_output=plan_result.raw,
+                    )
+
+                    if verify_result.verdict == "REJECT":
+                        ctx_log.warning(f"[Verifier] REJECT: {verify_result.reason}")
+                        yield _evt("log_line", msg=f"⚠️ Verifier rejected plan: {verify_result.reason[:120]}")
+                        # Treat as a patch failure — surface the reject reason for the next iteration
+                        error_text += f"\n\nVERIFIER_REJECT: {verify_result.reason}"
+                        if verify_result.corrections_made:
+                            # Still have a partially corrected plan — use it
+                            approved_plan = plan_result.data
+                        else:
+                            # Complete reject — skip to next iteration
+                            previous_attempts.append({
+                                "action": "plan_rejected",
+                                "diagnosis": plan_result.data.get("error_classification", {}).get("primary", "unknown"),
+                                "fix_description": "Verifier rejected plan.",
+                                "outcome": f"VERIFIER_REJECT: {verify_result.reason}",
+                                "created_files": [],
+                                "escalation_evidence": {"reason": verify_result.reason},
+                            })
+                            continue
+
+                    approved_plan = verify_result.approved_plan or plan_result.data
+                    if verify_result.corrections_made:
+                        yield _evt("log_line", msg=f"✏️ Verifier corrected {len(verify_result.corrections_made)} item(s).")
+
+                    # ── 7c. EXECUTOR ──────────────────────────────────────
+                    yield _evt("log_line", msg="⚙️ Executor: writing code...")
+                    exec_result_role = await execute_plan(
+                        code=current_code, error=error_text,
+                        boost_context=boost_prompt_text,
+                        approved_plan=approved_plan,
+                        escalation_context=escalation_ctx,
+                        user_prompt=prompt,
+                    )
+                    executor_model_used = exec_result_role.model_used
+                    raw_executor_output = exec_result_role.response.raw
+
+                    # ── 7d. REVIEWER ──────────────────────────────────────
+                    yield _evt("log_line", msg="🔬 Reviewer: validating output...")
+                    reviewer_retry = 0
+                    MAX_REVIEWER_ESCALATIONS = 4
+                    escalation_count = 0
+                    reviewer_result = None
+
+                    while escalation_count < MAX_REVIEWER_ESCALATIONS:
+                        reviewer_result = await review_output(
+                            executor_output_raw=raw_executor_output,
+                            approved_plan=approved_plan,
+                            retry_count=reviewer_retry,
+                        )
+                        reviewer_model_used = reviewer_result.model_used
+
+                        if reviewer_result.verdict == "APPROVED":
+                            if reviewer_result.repairs_made:
+                                yield _evt("log_line", msg=f"✅ Reviewer approved (with {len(reviewer_result.repairs_made)} inline repair(s)).")
+                            else:
+                                yield _evt("log_line", msg="✅ Reviewer approved.")
+                            break
+
+                        # ESCALATE — start a new inner cycle (no iteration burned)
+                        escalation_count += 1
+                        ctx_log.warning(f"[Reviewer] ESCALATE ({escalation_count}): {reviewer_result.escalation_reason}")
+                        yield _evt("log_line", msg=f"🔄 Reviewer escalating (cycle {escalation_count})...")
+
+                        if escalation_count >= MAX_REVIEWER_ESCALATIONS:
+                            # Force-accept best available output to avoid infinite loop
+                            yield _evt("log_line", msg="⚠️ Max reviewer escalations reached. Forcing execution with best available output.")
+                            try:
+                                reviewer_result.validated_output = exec_result_role.response
+                                reviewer_result.verdict = "APPROVED"
+                            except Exception:
+                                pass
+                            break
+
+                        # Feed evidence back — re-run Executor with escalation context
+                        evidence = reviewer_result.evidence_for_next_cycle
+                        new_escalation = escalation_ctx
+                        if evidence:
+                            new_escalation += f"\n\nREVIEWER_ESCALATION_EVIDENCE: {json.dumps(evidence)}"
+
+                        exec_result_role = await execute_plan(
+                            code=current_code, error=error_text,
+                            boost_context=boost_prompt_text,
+                            approved_plan=approved_plan,
+                            escalation_context=new_escalation,
+                            user_prompt=prompt,
+                        )
+                        executor_model_used = exec_result_role.model_used
+                        raw_executor_output = exec_result_role.response.raw
+                        reviewer_retry = 0  # fresh inner retry count for new execution
+
+                    # Final validated output from Reviewer
+                    if reviewer_result and reviewer_result.validated_output:
+                        ai_resp = reviewer_result.validated_output
+                    else:
+                        ai_resp = exec_result_role.response
+
+                    ctx_log.info(f"[Role Pipeline] Planner={planner_model_used} | Executor={executor_model_used} | Reviewer={reviewer_model_used}")
+
                 except AIServiceError as exc:
                     yield _evt("error", msg=f"🚫 AI failed: {exc}")
                     submission.status = "failed"
@@ -267,43 +467,94 @@ async def run_repair_loop(
                         ai_resp.pest_test, current_code, fqcn_ref)
 
                 # ── 8. Apply patch(es) via apply_all ─────────────────────────────
+                if not ai_resp.patches:
+                    raise PatchApplicationError("ZERO_FILES_EXTRACTED — escalate immediately")
+
                 patch_status = "applied"
                 actions_taken = []
                 try:
-                    patch_result: ApplyAllResult = patch_service.apply_all(current_code, ai_resp.patches)
-                    current_code = patch_result.updated_code
-                    actions_taken = patch_result.actions_taken
+                    patch_summary = [f"{p.action}:{p.target}" for p in ai_resp.patches]
+                    ctx_log.info(f"Applying {len(ai_resp.patches)} patches: {patch_summary}")
+                    patch_result = patch_service.apply_all(current_code, ai_resp.patches)
+                except PatchApplicationError as exc:
+                    ctx_log.error(f"[Repair] Patch apply failed: {exc}")
+                    patch_status = f"FAILED — {exc}"
+                    yield _evt("log_line", msg=f"⚠️ Patch failed: {exc}")
+                    error_text += f"\n\nPATCH_FAILED: {exc}"
+                    patch_result = None
 
+                if patch_result is not None:
+                    ctx_log.info(f"[PatchResult] created_files={list(patch_result.created_files.keys())} actions={patch_result.actions_taken}")
                     # Log any forbidden files that were blocked
                     for blocked in patch_result.skipped_forbidden:
                         yield _evt("log_line", msg=f"🚫 Blocked forbidden target: {blocked}")
 
-                    # Handle created files (Models, Migrations, etc.)
-                    for rel_path, content in patch_result.created_files.items():
-                        yield _evt("log_line", msg=f"📝 Creating: {rel_path}")
-                        await docker_service.copy_file(container, f"/var/www/sandbox/{rel_path}", content)
+                    # Quality gate: lint the full_replace controller code.
+                    # IMPORTANT: this gate only prevents current_code from being updated.
+                    # create_file patches are ALWAYS written below, even if this fails,
+                    # so dependency files (Models, Migrations, Factories) accumulate in the
+                    # container across iterations even when the controller PHP is broken.
+                    controller_lint_ok = True
+                    try:
+                        await _lint_php_content(container, patch_result.updated_code, "submitted/code.php")
+                        current_code = patch_result.updated_code
+                        actions_taken = patch_result.actions_taken
+                    except PatchApplicationError as exc:
+                        controller_lint_ok = False
+                        patch_status = f"FAILED — {exc}"
+                        yield _evt("log_line", msg=f"⚠️ Patch failed: {exc}")
+                        error_text += f"\n\nPATCH_FAILED: {exc}"
+                        # Keep actions_taken for any create_file entries that succeeded
+                        actions_taken = [a for a in patch_result.actions_taken if "create_file" in a]
 
-                    if patch_result.created_files:
-                        # Flush autoloader + run migrations once for all created files
-                        await docker_service.execute(container, "cd /var/www/sandbox && composer dump-autoload -q")
+                    # Always write create_file files regardless of controller lint outcome.
+                    files_written: dict[str, str] = {}
+                    for rel_path, content in patch_result.created_files.items():
+                        try:
+                            if 'database/migrations/' in rel_path:
+                                content = _normalize_migration(content)
+                            await _lint_php_content(container, content, rel_path)
+                            ctx_log.info(f"[FileWrite] Writing {rel_path} ({len(content)} chars)")
+                            yield _evt("log_line", msg=f"📝 Creating: {rel_path}")
+                            await docker_service.copy_file(container, f"/var/www/sandbox/{rel_path}", content)
+                            
+                            # Container-side verification
+                            verify = await docker_service.execute(container, f"php -l /var/www/sandbox/{rel_path} 2>&1", timeout=5)
+                            if verify.exit_code == 0:
+                                ctx_log.info(f"[FileWrite] ✅ Verified {rel_path}: {verify.stdout.strip()}")
+                            else:
+                                raise PatchApplicationError(f"FILE_NOT_LOADED_IN_CONTAINER: {rel_path} - {verify.stdout.strip()}")
+                                
+                            files_written[rel_path] = content
+                        except PatchApplicationError as exc:
+                            ctx_log.warning(f"[FileWrite] Skipped {rel_path} — lint failed: {exc}")
+                            yield _evt("log_line", msg=f"⚠️ Skipping {rel_path} — invalid PHP: {exc}")
+                        except Exception as exc:
+                            ctx_log.warning(f"[FileWrite] Unexpected error for {rel_path}: {exc}")
+
+                    if files_written:
+                        ctx_log.info(f"[Autoload] Running composer dump-autoload for {list(files_written.keys())}")
+                        dump_res = await docker_service.execute(container, "cd /var/www/sandbox && composer dump-autoload -q 2>&1")
+                        if dump_res.exit_code != 0:
+                            ctx_log.warning(f"[Autoload] composer dump-autoload failed: {dump_res.stdout}")
+                        else:
+                            ctx_log.info("[Autoload] composer dump-autoload OK")
                         mig_res = await docker_service.execute(
                             container,
-                            "cd /var/www/sandbox && php artisan migrate --force --no-interaction && php artisan optimize:clear > /dev/null",
-                            user="root"
+                            "cd /var/www/sandbox && php artisan migrate:fresh --force --no-interaction && php artisan optimize:clear > /dev/null 2>&1"
                         )
                         if mig_res.exit_code != 0:
+                            ctx_log.warning(f"[Autoload] Migration/Optimize failed: {mig_res.stderr}")
                             yield _evt("log_line", msg=f"⚠️ Migration/Optimize failed: {mig_res.stderr}")
+                        else:
+                            ctx_log.info("[Autoload] Migrations ran OK")
 
-                    if ai_resp.pest_test:
+                    if ai_resp.pest_test and controller_lint_ok:
                         current_pest_test = ai_resp.pest_test
                         await sandbox_service.inject_pest_test(container, current_pest_test)
 
                     action_str = " + ".join(actions_taken) if actions_taken else "none"
                     yield _evt("patch_applied", action=action_str, fix=ai_resp.fix_description)
-                except PatchApplicationError as exc:
-                    patch_status = f"FAILED — {exc}"
-                    yield _evt("log_line", msg=f"⚠️ Patch failed: {exc}")
-                    error_text += f"\n\nPATCH_FAILED: {exc}"
 
                 # ── 9. Track & persist ────────────────────────────────────────
                 previous_attempts.append({
@@ -311,13 +562,22 @@ async def run_repair_loop(
                     "patch_status": patch_status,
                     "diagnosis": ai_resp.diagnosis,
                     "fix_description": ai_resp.fix_description,
+                    "outcome": error_text[:300] if error_text else "unknown",
+                    # Tracks which files were created so the Dependency Guard
+                    # in escalation_service can detect re-creation attempts.
+                    "created_files": list(patch_result.created_files.keys()) if patch_result else [],
                 })
                 await _save_iteration(db, iteration_id, submission_id, iteration_num,
-                    current_code, exec_result, None, None, "failed",
+                    current_code, exec_result, None, iter_mutation_score, "failed",
                     int((time.monotonic() - iter_start) * 1000),
-                    boost_ctx_json=boost_ctx_json, ai_prompt=ai_resp.prompt,
-                    ai_response=ai_resp.raw, patch_applied=str([vars(p) for p in ai_resp.patches]),
-                    pest_test_code=ai_resp.pest_test, error_logs=error_text)
+                    boost_ctx_json=boost_ctx_json, ai_prompt=ai_resp.prompt if ai_resp else None,
+                    ai_response=ai_resp.raw if ai_resp else None,
+                    patch_applied=str([vars(p) for p in ai_resp.patches]) if ai_resp else None,
+                    pest_test_code=ai_resp.pest_test if ai_resp else None, error_logs=error_text,
+                    ai_model_used=ai_resp.model_used if (ai_resp and hasattr(ai_resp, 'model_used')) else None,
+                    planner_model=planner_model_used,
+                    executor_model=executor_model_used,
+                    reviewer_model=reviewer_model_used)
                 submission.total_iterations = iteration_num + 1
                 await db.commit()
 
@@ -333,6 +593,7 @@ async def run_repair_loop(
                    message=f"Repair failed after {max_iter} iterations.")
 
     finally:
+        reset_submission_id(submission_ctx_token)
         if container:
             await docker_service.destroy(container)
 
@@ -344,14 +605,22 @@ async def _save_iteration(
     boost_ctx_json: str | None = None, ai_prompt: str | None = None,
     ai_response: str | None = None, patch_applied: str | None = None,
     pest_test_code: str | None = None, error_logs: str | None = None,
+    ai_model_used: str | None = None,
+    planner_model: str | None = None,
+    executor_model: str | None = None,
+    reviewer_model: str | None = None,
 ) -> None:
     """Persist a single iteration record to the database."""
     db.add(Iteration(
         id=iteration_id, submission_id=submission_id, iteration_num=iteration_num,
         code_input=code_input,
-        execution_output=exec_result.stdout[:5000] if exec_result else None,
-        error_logs=(error_logs or ((exec_result.stderr + exec_result.stdout)[:5000] if exec_result else None)),
+        execution_output=exec_result.stdout[:5000] if (exec_result and hasattr(exec_result, 'stdout')) else None,
+        error_logs=(error_logs or ((exec_result.stderr + exec_result.stdout)[:5000] if (exec_result and hasattr(exec_result, 'stdout')) else None)),
         boost_context=boost_ctx_json, ai_prompt=ai_prompt, ai_response=ai_response,
+        ai_model_used=ai_model_used,
+        planner_model=planner_model,
+        executor_model=executor_model,
+        reviewer_model=reviewer_model,
         patch_applied=patch_applied, pest_test_code=pest_test_code,
         pest_test_result=pest_test_result, mutation_score=mutation_score,
         status=status, duration_ms=duration_ms, created_at=_now(),

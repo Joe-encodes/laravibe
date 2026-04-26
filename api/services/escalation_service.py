@@ -8,6 +8,7 @@ Escalation triggers:
   1. Repeated identical diagnoses (fuzzy match, threshold=2)
   2. Back-to-back patch application failures
   3. create_file was used but the original file still fails
+  4. Dependency Guard: AI tries to create_file for a path it already created
 """
 
 import re
@@ -44,6 +45,20 @@ def _last_action_was_create_file(previous_attempts: list[dict]) -> bool:
         return False
     last_action = previous_attempts[-1].get("action", "")
     return "create_file" in last_action and "full_replace" not in last_action
+
+
+def _get_all_created_files(previous_attempts: list[dict]) -> list[str]:
+    """
+    Return all file paths the AI successfully created in previous attempts.
+    
+    Paths are stored in previous_attempts[*]['created_files'] — a list of relative
+    paths added by repair_service when patch_result.created_files is non-empty.
+    """
+    seen: dict[str, int] = {}
+    for attempt in previous_attempts:
+        for path in attempt.get("created_files", []):
+            seen[path] = seen.get(path, 0) + 1
+    return list(seen.keys())
 
 
 def build_escalation_context(previous_attempts: list[dict]) -> str:
@@ -83,6 +98,17 @@ def build_escalation_context(previous_attempts: list[dict]) -> str:
             "The dependency file now EXISTS in the sandbox. Your ONLY job now is to output a `full_replace` "
             "patch for the original submitted file. Do NOT create the dependency again.\n"
             "Include BOTH the correct `use` imports and any code changes needed in the original file.\n\n"
+        )
+
+    # 4. Dependency Guard: AI tried to create the same file twice
+    created_paths = _get_all_created_files(previous_attempts)
+    if created_paths:
+        paths_str = ", ".join(f"`{p}`" for p in created_paths)
+        context += (
+            f"CRITICAL — DEPENDENCY ALREADY EXISTS IN SANDBOX: You have already created {paths_str} "
+            "in a previous iteration. These files are on the container filesystem RIGHT NOW. "
+            "DO NOT emit another create_file for them — it will be ignored and waste this iteration. "
+            "Your ONLY job is to fix the `use` imports and business logic in the original submitted file.\n\n"
         )
 
     return context.strip()
