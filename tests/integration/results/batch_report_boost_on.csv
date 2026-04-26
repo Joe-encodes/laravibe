@@ -1,6 +1,6 @@
 case_id,status,iterations,mutation_score,duration_s,submission_id,ai_model,use_boost,use_mutation,timestamp
-case-001,success,3,100.0,214.99,830ba34d-c276-4dc2-bbcf-69d9da2e197d,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
-case-002,success,3,100.0,118.16,efb45ee2-428c-4f8a-85cc-9a45781267f1,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
-case-003,failed,4,,265.02,f4a826e1-6cfd-45b0-84fa-bb719aa62162,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
-case-004,success,2,88.24,141.61,81dba472-0ed7-488f-9083-bfea0e761fa0,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
-case-005,failed,4,,231.7,751fbc35-3f5a-4219-98f9-7aa9df7c5c88,qwen3-max,True,True,2026-04-18T23:45:31.075674+00:00
+case-001,failed,4,,569.42,e1827030-013a-4613-b078-81a80d5c0e19,fallback-chain:qwen3-max,True,True,2026-04-21T15:38:42.586073+00:00
+case-002,failed,4,,388.57,9e866362-a274-4b5b-a6a4-b3b56d1fd2b7,fallback-chain:qwen3-max,True,True,2026-04-21T15:38:42.586073+00:00
+case-003,failed,4,,281.63,73329bfd-3eee-42e3-a74f-c1933e01a50c,fallback-chain:qwen3-max,True,True,2026-04-21T15:38:42.586073+00:00
+case-004,failed,4,,272.57,6ecd5666-d6c9-469f-81e7-a6cb3052c6ed,fallback-chain:qwen3-max,True,True,2026-04-21T15:38:42.586073+00:00
+case-005,failed,4,,265.73,e99aec45-e1de-4be6-9fca-63233d74693f,fallback-chain:qwen3-max,True,True,2026-04-21T15:38:42.586073+00:00
