@@ -123,6 +123,11 @@ async def stream_repair(
     submission = await db.get(Submission, submission_id)
     if not submission:
         raise HTTPException(404, f"Submission {submission_id} not found")
+    
+    # CRITICAL: Commit the transaction immediately to release the SQLite SHARED lock.
+    # Otherwise, the lock is held open for the entire duration of the stream,
+    # completely blocking the background task from saving iterations to the DB.
+    await db.commit()
 
     async def event_generator() -> AsyncGenerator[str, None]:
         import asyncio
