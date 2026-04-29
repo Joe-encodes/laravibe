@@ -1,22 +1,26 @@
+
 """
 api/routers/health.py — GET /api/health endpoint.
 Checks FastAPI is alive, Docker daemon is reachable, and DB is writable.
 """
-from fastapi import APIRouter
+import docker
+from fastapi import APIRouter, Depends
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.database import AsyncSessionLocal
+from api.database import get_db, get_sessionmaker
 from api.schemas import HealthResponse
+from api.config import get_settings
+import redis.asyncio as aioredis
 
 router = APIRouter(prefix="/api", tags=["health"])
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check() -> HealthResponse:
+async def health_check(db: AsyncSession = Depends(get_db)) -> HealthResponse:
     # Check Docker
     docker_status = "unknown"
     try:
-        import docker
         client = docker.from_env()
         client.ping()
         docker_status = "connected"
@@ -26,14 +30,12 @@ async def health_check() -> HealthResponse:
     # Check DB
     db_status = "unknown"
     try:
-        async with AsyncSessionLocal() as session:
-            await session.execute(text("SELECT 1"))
+        await db.execute(text("SELECT 1"))
         db_status = "connected"
     except Exception as exc:
         db_status = f"error: {exc}"
 
-    # Check AI configuration for the default provider
-    from api.config import get_settings
+    # Check AI configuration
     settings = get_settings()
     provider = settings.default_ai_provider.lower()
     
@@ -56,9 +58,23 @@ async def health_check() -> HealthResponse:
     else:
         ai_status = f"unknown_provider: {provider}"
 
+    # Check Redis Broker
+    redis_status = "unknown"
+    redis_client = None
+    try:
+        redis_client = aioredis.from_url(settings.redis_url)
+        await redis_client.ping()
+        redis_status = "connected"
+    except Exception as exc:
+        redis_status = f"error: {exc}"
+    finally:
+        if redis_client:
+            await redis_client.aclose()
+
     return HealthResponse(
         status="ok",
         docker=docker_status,
         ai=ai_status,
         db=db_status,
+        redis_broker=redis_status,
     )

@@ -3,28 +3,13 @@ api/database.py — Async SQLAlchemy setup with aiosqlite.
 Creates tables on startup. Use get_db() as FastAPI dependency.
 """
 from pathlib import Path
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from typing import Optional
+
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import event
 
 from api.config import get_settings
-
-settings = get_settings()
-
-# Ensure the data/ directory exists before SQLite tries to create the file
-Path("data").mkdir(exist_ok=True)
-
-engine = create_async_engine(
-    settings.database_url,
-    echo=settings.debug,
-    connect_args={"check_same_thread": False},
-)
-
-AsyncSessionLocal = async_sessionmaker(
-    engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-)
 
 
 class Base(DeclarativeBase):
@@ -32,28 +17,77 @@ class Base(DeclarativeBase):
     pass
 
 
+# Engine and session factory are created lazily, so importing this module
+# (e.g. in tests) does not fail if .env is not loaded yet.
+_engine = None
+_sessionmaker: Optional[async_sessionmaker] = None
+
+
+def get_engine():
+    global _engine
+    if _engine is None:
+        settings = get_settings()
+        Path("data").mkdir(exist_ok=True)
+        _engine = create_async_engine(
+            settings.database_url,
+            echo=settings.debug,
+            connect_args={"check_same_thread": False, "timeout": 15},
+        )
+        
+        @event.listens_for(_engine.sync_engine, "connect")
+        def set_sqlite_pragma(dbapi_connection, connection_record):
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA synchronous = NORMAL;")
+            cursor.close()
+            
+    return _engine
+
+
+def get_sessionmaker():
+    global _sessionmaker
+    if _sessionmaker is None:
+        _sessionmaker = async_sessionmaker(
+            get_engine(),
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+    return _sessionmaker
+
+
+def AsyncSessionLocal():
+    """Compatibility helper to return a new session from the sessionmaker."""
+    return get_sessionmaker()()
+
+
 async def create_tables() -> None:
     """Create all tables and apply any additive schema migrations.
     Called once at FastAPI startup.
     """
+    from sqlalchemy import text
+
+    engine = get_engine()
     async with engine.begin() as conn:
+        await conn.execute(text("PRAGMA journal_mode=WAL;"))
         await conn.run_sync(Base.metadata.create_all)
-        # Safe additive migrations: add columns that may not exist in older DBs.
-        # SQLite does not support IF NOT EXISTS on ALTER TABLE, so we catch the error.
+
+        # Additive columns for older DBs (ignore if already present)
         migrations = [
             "ALTER TABLE iterations ADD COLUMN ai_model_used VARCHAR(100)",
             "ALTER TABLE repair_summaries ADD COLUMN what_did_not_work TEXT",
+            "ALTER TABLE iterations ADD COLUMN planner_model VARCHAR(100)",
+            "ALTER TABLE iterations ADD COLUMN executor_model VARCHAR(100)",
+            "ALTER TABLE iterations ADD COLUMN reviewer_model VARCHAR(100)",
         ]
         for sql in migrations:
             try:
                 await conn.execute(text(sql))
             except Exception:
-                pass  # Column already exists — safe to ignore
+                pass  # column already exists
 
 
 async def get_db():
     """FastAPI dependency: yields an async DB session."""
-    async with AsyncSessionLocal() as session:
+    async with get_sessionmaker()() as session:
         try:
             yield session
             await session.commit()

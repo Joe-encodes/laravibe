@@ -7,7 +7,7 @@ Two tables:
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey
+from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.database import Base
@@ -23,6 +23,9 @@ def _uuid() -> str:
 
 class Submission(Base):
     __tablename__ = "submissions"
+    __table_args__ = (
+        Index("idx_submissions_status_created", "status", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
@@ -37,9 +40,9 @@ class Submission(Base):
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Research Metadata
-    case_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    category: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    experiment_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    case_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    category: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
+    experiment_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
 
     iterations: Mapped[list["Iteration"]] = relationship(
         "Iteration", back_populates="submission", cascade="all, delete-orphan"

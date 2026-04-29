@@ -6,7 +6,7 @@ import io
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, case
 from sqlalchemy.orm import selectinload
@@ -27,14 +27,12 @@ async def get_stats_summary(
     Returns high-level research metrics grouped by category.
     Includes success rates and average iterations per error type.
     """
-    # 1. Overall counts by status
     status_counts = await db.execute(
         select(Submission.status, func.count(Submission.id))
         .group_by(Submission.status)
     )
     status_map = {row[0]: row[1] for row in status_counts.all()}
 
-    # 2. Performance metrics grouped by category
     category_metrics = await db.execute(
         select(
             Submission.category,
@@ -45,21 +43,21 @@ async def get_stats_summary(
         .where(Submission.category.isnot(None))
         .group_by(Submission.category)
     )
-    
-    categories = []
-    for row in category_metrics.all():
-        categories.append({
-            "name": row[0],
-            "count": row[1],
-            "success_rate": round(row[2] * 100, 1),
-            "avg_iterations": round(row[3], 2)
-        })
 
-    return {
-        "overall": status_map,
-        "categories": categories,
-        "total": sum(status_map.values())
-    }
+    categories = [
+        {
+            "name": row[0], "count": row[1],
+            "success_rate": round(row[2] * 100, 1),
+            "avg_iterations": round(row[3], 2),
+        }
+        for row in category_metrics.all()
+    ]
+    return {"overall": status_map, "categories": categories, "total": sum(status_map.values())}
+
+
+async def _query_summary(db: AsyncSession) -> dict:
+    """Internal helper — shared query used by both /summary and / endpoints."""
+    return await get_stats_summary.__wrapped__(db)  # type: ignore[attr-defined]
 
 
 @router.get("/efficiency")
@@ -102,29 +100,30 @@ async def get_efficiency_trends(
 async def export_research_data(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    limit: int = Query(1000, ge=1, le=10000, description="Max records to export"),
+    offset: int = Query(0, ge=0, description="Number of records to skip"),
 ):
     """
-    Exports the complete history in a research-friendly CSV format.
-    Includes categories, experiment IDs, and mutation scores.
+    Exports paginated research CSV. Use limit/offset for large datasets.
     """
     result = await db.execute(
         select(Submission)
         .options(selectinload(Submission.iterations))
         .order_by(desc(Submission.created_at))
+        .offset(offset)
+        .limit(limit)
     )
     submissions = result.scalars().all()
 
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Headers
     writer.writerow([
         "submission_id", "created_at", "status", "category", "case_id", 
         "experiment_id", "total_iterations", "best_mutation_score"
     ])
 
     for sub in submissions:
-        # Find best mutation score among iterations
         best_mut = 0.0
         if sub.iterations:
             scores = [i.mutation_score for i in sub.iterations if i.mutation_score is not None]
@@ -144,40 +143,62 @@ async def export_research_data(
     response = Response(content=output.getvalue(), media_type="text/csv")
     response.headers["Content-Disposition"] = f"attachment; filename=repair_research_{datetime.now().strftime('%Y%m%d')}.csv"
     return response
+
+
 @router.get("/")
 async def get_unified_stats(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Unified endpoint for the frontend dashboard.
-    Aggregates overall success rates, averages, and counts.
-    """
-    summary = await get_stats_summary(db)
-    
-    # Calculate global averages
+    """Unified endpoint for the frontend dashboard."""
+    # Execute the summary query directly on this session — do NOT call the
+    # route handler function above, as that would violate DI contract.
+    status_counts = await db.execute(
+        select(Submission.status, func.count(Submission.id))
+        .group_by(Submission.status)
+    )
+    status_map = {row[0]: row[1] for row in status_counts.all()}
+
+    category_metrics = await db.execute(
+        select(
+            Submission.category,
+            func.count(Submission.id).label("count"),
+            func.avg(case((Submission.status == 'success', 1.0), else_=0.0)).label("success_rate"),
+            func.avg(Submission.total_iterations).label("avg_iterations")
+        )
+        .where(Submission.category.isnot(None))
+        .group_by(Submission.category)
+    )
+    categories = [
+        {
+            "name": row[0], "count": row[1],
+            "success_rate": round(row[2] * 100, 1),
+            "avg_iterations": round(row[3], 2),
+        }
+        for row in category_metrics.all()
+    ]
+
     avg_metrics = await db.execute(
         select(
             func.avg(Submission.total_iterations),
             func.avg(Iteration.mutation_score)
-        ).join(Iteration, Submission.id == Iteration.submission_id)
+        )
+        .join(Iteration, Submission.id == Iteration.submission_id)
         .where(Submission.status == 'success')
     )
     avg_row = avg_metrics.first()
-    
     avg_iterations = float(avg_row[0] or 0) if avg_row else 0.0
     avg_mutation_score = float(avg_row[1] or 0) if avg_row else 0.0
-    
-    # Global success rate
-    total = sum(summary["overall"].values())
-    success_count = summary["overall"].get("success", 0)
+
+    total = sum(status_map.values())
+    success_count = status_map.get("success", 0)
     global_success_rate = (success_count / total * 100) if total > 0 else 0.0
 
     return {
-        "global_success_rate": global_success_rate,
-        "avg_iterations": avg_iterations,
-        "avg_mutation_score": avg_mutation_score,
+        "global_success_rate": round(global_success_rate, 1),
+        "avg_iterations": round(avg_iterations, 2),
+        "avg_mutation_score": round(avg_mutation_score, 1),
         "total_repairs": total,
-        "categories": summary["categories"],
-        "status_distribution": summary["overall"]
+        "categories": categories,
+        "status_distribution": status_map,
     }

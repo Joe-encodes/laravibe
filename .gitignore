@@ -28,6 +28,11 @@ scratch/
 
 # Logs
 *.log
+*.json
+*.rdb
+*.txt
+scratch.py
+test_code.php
 
 # IDEs & OS
 .vscode/

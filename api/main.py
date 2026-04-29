@@ -5,6 +5,7 @@ Start with:
     uvicorn api.main:app --reload --port 8000
 """
 import logging
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -33,8 +34,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Run startup/shutdown tasks."""
     logger.info("Starting up — creating DB tables if needed...")
-    await create_tables()
-    logger.info("DB ready.")
+    try:
+        await create_tables()
+        logger.info("DB ready.")
+    except Exception as exc:
+        logger.critical(f"Database initialization failed: {exc}", exc_info=True)
+        print(f"FATAL: Could not initialize database: {exc}", file=sys.stderr)
+        sys.exit(1)
     yield
     logger.info("Shutting down — goodbye.")
 

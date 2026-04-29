@@ -4,6 +4,7 @@ All config is centralised here. Never read env vars directly anywhere else.
 """
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+import sys
 
 
 class Settings(BaseSettings):
@@ -49,6 +50,7 @@ class Settings(BaseSettings):
 
     # ── App ───────────────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/repair.db"
+    redis_url: str = "redis://localhost:6379/0"
     max_code_size_kb: int = 100
     secret_key: str = "change-this-in-production"
     debug: bool = False
@@ -64,9 +66,16 @@ class Settings(BaseSettings):
     use_role_pipeline: bool = False
 
 
+def _validate_settings(s: Settings) -> None:
+    """Ensure critical security values have been changed from defaults."""
+    if s.master_repair_token == "change-me-in-production":
+        print("ERROR: MASTER_REPAIR_TOKEN is still set to the default. Change it in .env.", file=sys.stderr)
+        sys.exit(1)
 
 
 @lru_cache
 def get_settings() -> Settings:
     """Cached singleton — call this everywhere instead of instantiating Settings()."""
-    return Settings()
+    settings = Settings()
+    _validate_settings(settings)
+    return settings

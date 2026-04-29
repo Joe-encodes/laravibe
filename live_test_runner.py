@@ -21,7 +21,7 @@ import sys
 import os
 import time
 
-BASE_URL   = "http://localhost:8000"
+BASE_URL   = "http://127.0.0.1:8000"
 TOKEN      = os.environ.get("MASTER_REPAIR_TOKEN", "change-me-in-production")
 DATASET_DIR = "dataset"
 

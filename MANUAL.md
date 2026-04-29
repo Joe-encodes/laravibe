@@ -112,22 +112,20 @@ The current code string is written to `/submitted/code.php` via in-memory tar ar
 #### Step 5 — Scaffold Route (BEFORE Boost)
 `sandbox_service.scaffold_route()` appends `Route::apiResource()` to `routes/api.php` idempotently. Runs **before** Boost so `route:list` sees the new route in the context it feeds to the AI.
 
-#### Step 6 — Query Boost Context
-`boost_service.query_context()` runs inside the container:
-- `boost:schema --format=json` → fallback `db:show --json`
-- `boost:docs --query=<component_type>` → supplementary
-- `route:list --json` + raw `routes/api.php` always appended
+#### Step 6 — Zoom-In Discovery
+`discovery.py` scans `use` statements and uses `artisan tinker` reflection to fetch public method signatures for referenced classes.
 
-Cache keyed by `SHA-256(submission_id + framework_version + component_type)`.
+#### Step 7 — Query Boost Context
+`boost_service.query_context()` runs inside the container (schema + docs).
 
-#### Step 7 — Retrieve Similar Past Repairs
-`context_service.retrieve_similar_repairs()` scores the 200-item sliding window and injects the top-3 similar repairs (with dead-ends) into the prompt.
+#### Step 8 — Retrieve Similar Past Repairs
+`context_service.retrieve_similar_repairs()` scores the 200-item sliding window.
 
-#### Step 8 — Escalation Check
-`escalation_service.build_escalation_context()` evaluates 4 stuck-loop rules and injects corrective instructions if triggered.
+#### Step 9 — Post-Mortem Strategy
+If a previous iteration failed, the **Critic** analyzes logs and generates a `Fix Strategy` JSON.
 
-#### Step 9 — Call AI
-`ai_service.get_repair()` assembles the prompt and calls the LLM via `ROTATION_CHAIN` (batch) or `FALLBACK_CHAIN` (single). Returns `AIRepairResponse` with `patches`, `pest_test`, `diagnosis`, `fix_description`, `model_used`.
+#### Step 10 — Call AI
+`ai_service.get_repair()` assembles the prompt (including discovery metadata and post-mortem strategy).
 
 #### Step 10 — Ensure `covers()` Directive
 `sandbox_service.ensure_covers_directive()` injects missing `use function Pest\Laravel\{...};` imports and a `covers(ClassName::class);` directive into the AI-generated test.

@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock, MagicMock
 @pytest.fixture
 def ok_exec():
     """A successful docker exec result."""
-    from api.services.docker_service import ExecResult
+    from api.services.sandbox.docker import ExecResult
     return ExecResult(stdout="Success!", stderr="", exit_code=0, duration_ms=100)
 
 
 @pytest.fixture
 def err_exec():
     """A failed docker exec result with PHP fatal error."""
-    from api.services.docker_service import ExecResult
+    from api.services.sandbox.docker import ExecResult
     return ExecResult(
         stdout="",
         stderr="Fatal error: Class 'App\\Models\\Product' not found in /submitted/code.php on line 12",

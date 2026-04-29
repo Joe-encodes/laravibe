@@ -18,7 +18,8 @@ RUN apk add --no-cache \
     libjpeg-turbo \
     libwebp \
     oniguruma \
-    sqlite
+    sqlite \
+    coreutils
 
 # ── 3. Build dependencies + PHP extensions ────────────────────────────────────
 # SQLite only — no pdo_mysql, no mysql-client needed
@@ -55,8 +56,7 @@ RUN apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
 # pest --mutate requires pcov.enabled=1 — installing the extension is not enough.
 # Without this, every mutation run fails with "Extension pcov not found" regardless
 # of whether pcov.so is loaded, making the mutation gate permanently soft-pass.
-RUN echo "pcov.enabled=1" >> /usr/local/etc/php/conf.d/docker-php-ext-pcov.ini \
-    && echo "pcov.directory=/var/www/sandbox/app" >> /usr/local/etc/php/conf.d/docker-php-ext-pcov.ini
+RUN echo "pcov.enabled=1" >> /usr/local/etc/php/conf.d/docker-php-ext-pcov.ini
 
 # ── 5. Composer ───────────────────────────────────────────────────────────────
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

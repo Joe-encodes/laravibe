@@ -1,5 +1,6 @@
+
 """
-api/services/docker_service.py — Container lifecycle management via docker-py.
+api/services/docker.py — Container lifecycle management via docker-py.
 
 Responsibilities:
 - create_container()  spin up a fresh laravel-sandbox container
@@ -45,9 +46,15 @@ class ExecResult:
         ])
 
 
+_docker_client = None
+
+
 def _get_client() -> docker.DockerClient:
-    """Return a Docker client. Raises DockerException if daemon unreachable."""
-    return docker.from_env(timeout=60)
+    """Return a shared Docker client. Raises DockerException if daemon unreachable."""
+    global _docker_client
+    if _docker_client is None:
+        _docker_client = docker.from_env(timeout=60)
+    return _docker_client
 
 
 async def is_alive(container) -> bool:
@@ -115,23 +122,44 @@ async def copy_file(container, dest_path: str, content: str) -> None:
     """Write `content` to `dest_path` inside the running container."""
     def _copy():
         import pathlib
-        # Build an in-memory tar archive
+        import posixpath
         content_bytes = content.encode("utf-8")
+
+        # If path is relative, it's relative to the Laravel root
+        if not posixpath.isabs(dest_path):
+            abs_dest_path = posixpath.join("/var/www/sandbox", dest_path)
+        else:
+            abs_dest_path = dest_path
+
+        # Use posixpath for container-side dir (container is always Linux)
+        dest_dir = posixpath.dirname(abs_dest_path)
+        filename = pathlib.PurePosixPath(abs_dest_path).name
+
+        # Step 1: Ensure the directory exists BEFORE put_archive.
+        # Check the exit code — if this fails, put_archive will 404.
+        # Both exec_run and put_archive now use absolute paths to prevent WORKDIR vs Root mismatches.
+        mkdir_result = container.exec_run(
+            f"mkdir -p {dest_dir}",
+            user="root"
+        )
+        if mkdir_result.exit_code != 0:
+            raise RuntimeError(
+                f"mkdir -p {dest_dir} failed in container "
+                f"(exit {mkdir_result.exit_code}): "
+                f"{(mkdir_result.output or b'').decode(errors='replace')}"
+            )
+
+        # Step 2: Build the in-memory tar archive.
         tar_buffer = io.BytesIO()
-        filename = pathlib.Path(dest_path).name
-        
         with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
             info = tarfile.TarInfo(name=filename)
             info.size = len(content_bytes)
             tar.addfile(info, io.BytesIO(content_bytes))
         tar_buffer.seek(0)
 
-        dest_dir = str(pathlib.Path(dest_path).parent)
-        container.exec_run(f"mkdir -p {dest_dir}", user="root")
-        container.exec_run(f"chmod 777 {dest_dir}", user="root")
-        
+        # Step 3: Stream the archive into the now-guaranteed directory.
         container.put_archive(dest_dir, tar_buffer.read())
-        logger.debug(f"[{container.short_id}] File copied to {dest_path}")
+        logger.debug(f"[{container.short_id}] File written to {dest_path}")
 
     await asyncio.to_thread(_copy)
 
@@ -151,8 +179,11 @@ async def execute(
     start = time.monotonic()
 
     def _exec():
+        safe_timeout = max(1, timeout - 2)
+        import shlex
+        cmd_str = f"timeout -k 2 {safe_timeout} bash -c {shlex.quote(command)}"
         result = container.exec_run(
-            cmd=["bash", "-c", command],
+            cmd=["bash", "-c", cmd_str],
             stdout=True,
             stderr=True,
             demux=True,          # separate stdout/stderr streams
@@ -220,3 +251,5 @@ async def destroy(container) -> None:
             logger.warning(f"Could not remove container {container.short_id}: {exc}")
 
     return await asyncio.to_thread(_destroy)
+
+

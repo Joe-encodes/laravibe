@@ -1,3 +1,4 @@
+
 """
 api/services/escalation_service.py — Stuck loop detection and escalation.
 
@@ -21,11 +22,15 @@ def _get_words(text: str) -> set:
     return set(re.findall(r'\b\w+\b', text.lower()))
 
 
-def is_fuzzy_match(text1: str, text2: str, threshold: float = 0.70) -> bool:
+def is_fuzzy_match(text1: str, text2: str, threshold: float = 0.85) -> bool:
     w1 = _get_words(text1)
     w2 = _get_words(text2)
     if not w1 or not w2:
-        return text1 == text2
+        return text1.strip() == text2.strip()
+    
+    if len(w1) < 5 or len(w2) < 5:
+        return text1.strip().lower() == text2.strip().lower()
+
     overlap = len(w1.intersection(w2))
     return (overlap / len(w1) >= threshold) and (overlap / len(w2) >= threshold)
 
@@ -52,7 +57,7 @@ def _get_all_created_files(previous_attempts: list[dict]) -> list[str]:
     Return all file paths the AI successfully created in previous attempts.
     
     Paths are stored in previous_attempts[*]['created_files'] — a list of relative
-    paths added by repair_service when patch_result.created_files is non-empty.
+    paths added by orchestrator when patch_result.created_files is non-empty.
     """
     seen: dict[str, int] = {}
     for attempt in previous_attempts:
@@ -112,3 +117,17 @@ def build_escalation_context(previous_attempts: list[dict]) -> str:
         )
 
     return context.strip()
+
+
+async def escalate_empty_patch(submission_id: str, iteration: int, raw_response: str):
+    """
+    Called when the AI returns a valid-looking XML block but with ZERO <file> tags.
+    This usually means it's stuck or refusing to output code.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.error(f"[{submission_id}] ESCALATION: AI returned zero patches in iteration {iteration}")
+    # In a real system, we might alert a human or try a "nuclear" prompt reset.
+    # For now, we just log it; the orchestrator will raise PatchApplicationError.
+
+

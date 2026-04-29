@@ -141,6 +141,9 @@ boost:docs   (Laravel Boost)  →  (no fallback, skipped)
 route:list   (always run)     →  routes/api.php raw content (always appended)
 ```
 
+**Zoom-In Discovery (`discovery.py`):**
+A specialized reflection service that scans code for `use` statements and extracts public method signatures from the container via `artisan tinker`. This provides the AI with exact dependency information without requiring massive context windows.
+
 **Cache:** Keyed by `SHA-256(submission_id + framework_version + component_type)` — **not** by raw error text. This means:
 - Multiple iterations in the same submission that hit the same component type share a cache entry.
 - Batch runs with different `submission_id` values never contaminate each other.
@@ -156,25 +159,16 @@ route:list   (always run)     →  routes/api.php raw content (always appended)
 **Model Chains:**
 
 ```python
-# Used during batch evaluation — rotates cognitive diversity per iteration
-ROTATION_CHAIN = [
-    ("nvidia",    "Qwen/Qwen2.5-Coder-32B-Instruct"),   # Iteration 0
-    ("dashscope", "deepseek-v3"),                        # Iteration 1
-    ("nvidia",    "meta/llama-3.3-70b-instruct"),        # Iteration 2
-    ("gemini",    "gemini-2.5-flash"),                   # Iteration 3
-]
+**Model Pools:**
 
-# Used when DEFAULT_AI_PROVIDER=fallback (single submissions)
-FALLBACK_CHAIN = [
-    ("nvidia",    "meta/llama-3.3-70b-instruct"),
-    ("nvidia",    "Qwen/Qwen2.5-72B-Instruct"),
-    ("dashscope", "deepseek-v3"),
-    ("dashscope", "qwen-max"),
-    ("groq",      "llama-3.3-70b-versatile"),
-    ("cerebras",  "llama-3.3-70b"),
-    ("gemini",    "gemini-2.0-flash"),
-    ("gemini",    "gemini-2.5-flash"),
-]
+```python
+# Each pool = [(provider, model), ...] ordered by preference.
+PLANNER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
+VERIFIER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
+POST_MORTEM_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
+EXECUTOR_POOL = [("nvidia", "meta/llama-3.3-70b-instruct"), ("nvidia", "Qwen/Qwen2.5-Coder-32B-Instruct")]
+REVIEWER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
+```
 ```
 
 **Prompt Assembly (`_build_prompt`):** Uses `.replace()` on the `repair_prompt.md` template — never f-strings, because PHP code contains `{}` which would crash f-string parsing. Fields injected:
@@ -262,34 +256,35 @@ Top-3 matches above the 0.6 similarity threshold are formatted as a prompt adden
 
 ---
 
-### H. `repair_service.py` — The Orchestrator
+### H. `api/services/repair/orchestrator.py` — The Orchestrator
 
-The main `async def run_repair_loop()` generator. 413 lines. Key design decisions:
+The core logic has been modularized into `api/services/repair/`:
+- `orchestrator.py`: Manages the high-level loop and state machine.
+- `pipeline.py`: Implements the 13-step repair sequence.
+- `context.py`: Manages iteration state and history.
 
-**Container lifecycle:** One container is created **before** the iteration loop and destroyed in `finally`. This is the V2 "persistent container" model — supplementary files created in iteration N are naturally present in iteration N+1. No re-injection needed.
+**Container lifecycle:** One container is created **before** the iteration loop and destroyed in `finally`. Supplementary files created in iteration N are naturally present in iteration N+1.
 
-> **Note on `reinject_files`:** `sandbox_service.reinject_files()` still exists but is not called in the current main loop. It is preserved for the legacy V1 per-iteration fresh-container model.
-
-**Iteration sequence (13 steps):**
+**Refined Iteration sequence (13 steps):**
 ```
-1.  copy_code()
-2.  php -l lint gate
-3.  detect_class_info()
-4.  place_code_in_laravel()
-5.  scaffold_route()          ← BEFORE boost (so route:list sees the route)
-6.  boost_service.query_context()
-7.  context_service.retrieve_similar_repairs()
-8.  escalation_service.build_escalation_context()
-9.  ai_service.get_repair()
-10. sandbox_service.ensure_covers_directive()
-11. patch_service.apply_all()
-12. run_pest_test()
-13. run_mutation_test() (only if AI test present and is_genuine=False)
+1.  docker.copy_code()                 ← INITIAL BOOTSTRAP
+2.  sandbox.detect_class_info()        ← DETECT NAMESPACE
+3.  sandbox.setup_sqlite()             ← SCRATCH DB & BASE CONTROLLER
+4.  sandbox.place_code_in_laravel()    ← PSR-4 PLACEMENT
+5.  sandbox.scaffold_route()           ← REGISTER ROUTE
+6.  boost_service.query_context()      ← SCHEMA DISCOVERY
+7.  context.retrieve_similar()         ← RAG-LITE MEMORY
+8.  escalation.build_context()         ← STUCK LOOP DETECTION
+9.  ai_service.get_repair()            │ EXECUTION (XML PIPELINE)
+10. testing.ensure_covers()            │ PEST PREP
+11. patch_service.apply_all()          │ APPLY PATCHES
+12. testing.run_pest_test()            │ FUNCTIONAL GATE
+13. testing.run_mutation_test()        │ QUALITY GATE
 ```
 
-**`_normalize_code()`:** Strips CRLF (`\r\n` → `\n`) and UTF-8 BOM (`\ufeff`) from submitted code. Applied once on the raw submission.
-
-**`_normalize_migration()`:** Converts named-class migrations (`class Foo extends Migration {}`) to anonymous-class syntax (`return new class extends Migration {};`). Prevents `Cannot redeclare class` fatal errors during iterative loops.
+**Sandbox Hardening:**
+- **Tinker-based Execution**: `execute_code` uses `artisan tinker` to ensure full Laravel bootstrapping.
+- **Base Controller Scaffolding**: Automatically creates `App\Http\Controllers\Controller` if missing.
 
 **`iter_mutation_score` tracking:** Even when an iteration fails the mutation gate, the partial score is stored in `mutation_score` on the `Iteration` record. This ensures every iteration in the research dataset has a score field, enabling full distribution analysis.
 

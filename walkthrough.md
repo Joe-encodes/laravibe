@@ -1,7 +1,6 @@
 # LaraVibe AI Repair Engine — Project Walkthrough
 
-**Last updated:** 2026-04-22  
-**Conversation series:** dc5d3914 → 91a2f97a → cae39008 → f28ee76f → f46d7b07 → 44ea3b32 → b1da13d1
+**Last updated:** 2026-04-26  
 
 ---
 
@@ -11,11 +10,13 @@ An end-to-end **automated PHP/Laravel API repair platform** for academic researc
 
 1. Accepts broken PHP/Laravel REST API code via a FastAPI backend.
 2. Spins up an isolated Docker container per submission.
-3. Feeds the runtime error to a large language model.
-4. Applies the AI's patch using a strict `full_replace` / `create_file` architecture.
-5. Re-runs **Pest** tests and a **mutation gate** to validate correctness.
-6. Repeats up to `MAX_ITERATIONS=4` or until the code is healthy.
-7. Persists every iteration (code, error, boost context, AI prompt, AI response, model used, mutation score, duration) to SQLite and CSV for research data analysis.
+3. **Zoom-In Discovery**: Automatically extracts public method signatures from referenced classes via PHP reflection to provide pinpoint project context.
+4. **Post-Mortem Critic**: Intercepts failed test results to generate a deterministic "Fix Strategy" before the next repair attempt.
+5. Employs a multi-stage agentic loop (Planner -> Verifier -> Executor -> Reviewer).
+6. Applies the AI's patch using a strict `full_replace` / `create_file` architecture.
+7. Re-runs **Pest** tests and a **mutation gate** to validate correctness.
+8. Repeats up to `MAX_ITERATIONS=4` or until the code is healthy.
+9. Persists every iteration (code, error, boost context, AI prompt, AI response, model used, mutation score, duration) to SQLite and CSV for research data analysis.
 
 ---
 
@@ -32,19 +33,19 @@ Broken PHP ──► FastAPI (api/main.py)
                     │  (Async generator — yields SSE events)  │
                     │                                         │
                     │  Per iteration:                         │
-                    │   1. copy_code → container              │
-                    │   2. php -l lint gate                   │
-                    │   3. detect_class_info()                │
-                    │   4. place_code_in_laravel()            │
-                    │   5. scaffold_route()  ← BEFORE boost   │
+                    │   1. docker.copy_code()                 │
+                    │   2. sandbox.detect_class_info()        │
+                    │   3. sandbox.setup_sqlite()             │
+                    │   4. sandbox.place_code_in_laravel()    │
+                    │   5. sandbox.scaffold_route()           │
                     │   6. boost_service.query_context()      │
-                    │   7. context_service.retrieve_similar() │
-                    │   8. escalation_service.build_context() │
+                    │   7. context.retrieve_similar()         │
+                    │   8. escalation.build_context()         │
                     │   9. ai_service.get_repair()            │
-                    │  10. sandbox_service.ensure_covers()    │
+                    │  10. testing.ensure_covers()            │
                     │  11. patch_service.apply_all()          │
-                    │  12. run_pest_test()                    │
-                    │  13. run_mutation_test() (if AI test)   │
+                    │  12. testing.run_pest_test()            │
+                    │  13. testing.run_mutation_test()        │
                     │  14. _save_iteration() → SQLite + CSV   │
                     └─────────────────────────────────────────┘
                               │
@@ -60,13 +61,12 @@ Broken PHP ──► FastAPI (api/main.py)
 | File | Responsibility |
 |---|---|
 | `api/main.py` | FastAPI app init, middleware (CORS, rate limiting), router registration, unified logging setup |
-| `api/logging_config.py` | Sets up console + rotating file handler (10 MB × 5 backups) with `submission_id` context |
-| `api/models.py` | SQLAlchemy ORM: `Submission`, `Iteration`, `RepairSummary` |
-| `api/services/repair_service.py` | Main async generator loop — orchestrates all services per iteration |
-| `api/services/ai_service.py` | LLM dispatch: rotation chain, fallback chain, JSON parsing, `_fix_json_escapes`, `_extract_json_object` |
-| `api/services/sandbox_service.py` | Docker container helpers: class detection, SQLite setup, code placement, route scaffolding, Pest/mutation execution, covers() injection |
-| `api/services/patch_service.py` | Applies `full_replace` / `create_file` patches; enforces forbidden file blocklist; strips markdown fences |
-| `api/services/boost_service.py` | Queries Laravel schema, routes, and docs from inside the container; keyed by `(submission_id, component_type)` to prevent cross-submission cache contamination |
+| `api/services/repair/orchestrator.py` | Main async generator loop — manages the high-level state machine |
+| `api/services/repair/pipeline.py` | The refined 13-step repair sequence (bootstrapping, AI loop, validation) |
+| `api/services/ai_service.py` | LLM dispatch: rotation chain, fallback chain, JSON/XML parsing, `_fix_json_escapes` |
+| `api/services/sandbox/` | Modular sandbox management: `docker.py` (low-level), `laravel.py` (framework-specific), `testing.py` (Pest/Mutation) |
+| `api/services/patch_service.py` | Applies XML patches; enforces forbidden file blocklist; strips markdown fences |
+| `api/services/boost_service.py` | Queries Laravel schema, routes, and docs from inside the container |
 | `api/services/escalation_service.py` | 4-rule stuck-loop detector: repeated diagnoses, patch failures, create_file without fixing original, Dependency Guard |
 | `api/services/context_service.py` | 200-item sliding window memory: stores successful repairs, retrieves top-3 similar past fixes using `SequenceMatcher` + efficiency weighting |
 | `api/services/docker_service.py` | Low-level Docker exec/copy/destroy primitives |
@@ -150,6 +150,18 @@ These are the issues that have recurred across **multiple sessions** and have ne
 ### 5.4 🔴 Mutation Score Parser — Silent Zero Returns
 
 **Problem:** `parse_mutation_score()` in `sandbox_service.py` uses 6 regex patterns. If Pest's `--mutate` output format changes slightly (e.g., different ANSI codes, or a new version changes the summary line structure), all 6 patterns can fail, and the function silently returns `0.0` with only a WARNING log. A score of 0.0 causes the iteration to be treated as a mutation failure — triggering another repair iteration unnecessarily.
+
+### Phase A: Context Discovery & Analysis
+*   **Step 1: PHP Lint Gate**: Fast syntax check (`php -l`) to catch immediate blockers.
+*   **Step 2: Zoom-In Discovery**: Scans `use` statements and uses `artisan tinker` reflection to fetch real method signatures from `App\` classes.
+*   **Step 3: Relationship Discovery**: Dynamically extracts Eloquent relationships (`belongsTo`, `hasMany`) to understand the data model.
+*   **Step 4: Post-Mortem Analysis**: If a previous iteration failed, a **Critic** agent analyzes the Pest output and Laravel logs to produce a JSON "Fix Strategy."
+
+### Phase B: The Agentic Repair Loop
+1.  **Planner**: Receives the original code, discovery metadata, and the Post-Mortem strategy. It generates a high-level repair plan.
+2.  **Verifier**: Critiques the plan for logical flaws or missed dependencies.
+3.  **Executor**: Generates the actual PHP code and patches (Models, Migrations, Controllers).
+4.  **Reviewer**: Final syntax and safety check before the code is applied to the container.
 
 **Current state:** There is a `logger.warning()` on no-match, but no SSE event is emitted to the frontend. The user sees a mutation score of 0% with no explanation.
 

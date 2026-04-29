@@ -1,59 +1,90 @@
-"""
-tests/test_patch_service.py — Unit tests for api/services/patch_service.py
-No Docker, no AI, no network. Pure logic tests.
-"""
+
 import pytest
-from api.services.patch_service import apply, PatchApplicationError
+from unittest.mock import AsyncMock, patch, MagicMock
+from api.services.patch_service import apply_all, PatchApplicationError
 from api.services.ai_service import PatchSpec
 
 
-def _patch(action="replace", target=None, replacement="", filename=None):
-    return PatchSpec(action=action, target=target, replacement=replacement, filename=filename)
+def _patch(action="full_replace", target="app/Test.php", replacement="<?php", filename=None):
+    return PatchSpec(action=action, target=target, replacement=replacement, filename=filename or target)
 
 
-class TestFullReplace:
-    def test_full_replace_success(self):
-        code = "<?php\necho 'hello';\n"
-        patch = _patch("full_replace", replacement="<?php\necho 'world';\n")
-        result = apply(code, patch)
-        assert "echo 'world';" in result
-        assert "echo 'hello';" not in result
-
-    def test_full_replace_empty_raises(self):
-        patch = _patch("full_replace", replacement="")
-        with pytest.raises(PatchApplicationError, match="replacement content is empty"):
-            apply("<?php echo 'hi';", patch)
-
-    def test_full_replace_strips_markdown_fences(self):
-        code = "<?php\nfunction old() {}\n"
-        patch = _patch("full_replace", replacement="```php\n<?php\nfunction new() {}\n```")
-        result = apply(code, patch)
-        assert "function new() {}" in result
-        assert "```" not in result
+@pytest.mark.asyncio
+async def test_apply_all_success():
+    patches = [_patch()]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+        patch("api.services.sandbox.write_file", AsyncMock()),
+        patch("api.services.sandbox.lint_php", AsyncMock(return_value=(True, "No syntax errors detected"))),
+    ):
+        results = await apply_all("container-123", patches)
+        assert results["app/Test.php"] is True
 
 
-class TestLegacyActions:
-    def test_replace_raises_error(self):
-        patch = _patch("replace", target="x", replacement="y")
-        with pytest.raises(PatchApplicationError, match="no longer permitted"):
-            apply("<?php", patch)
-
-    def test_append_raises_error(self):
-        patch = _patch("append", replacement="y")
-        with pytest.raises(PatchApplicationError, match="no longer permitted"):
-            apply("<?php", patch)
-
-
-class TestCreateFile:
-    def test_create_file_returns_code_unchanged(self):
-        code = "<?php echo 'original';"
-        patch = _patch("create_file", replacement="<?php // new file", filename="NewModel.php")
-        result = apply(code, patch)
-        assert result == code
+@pytest.mark.asyncio
+async def test_apply_forbidden_file():
+    """Forbidden files must be blocked; since the whole batch fails, raises PatchApplicationError."""
+    patches = [_patch(target=".env", filename=".env")]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+    ):
+        with pytest.raises(PatchApplicationError):
+            await apply_all("container-123", patches)
 
 
-class TestUnknownAction:
-    def test_unknown_action_raises(self):
-        patch = _patch("delete", target="something", replacement="")
-        with pytest.raises(PatchApplicationError, match="Unknown patch action"):
-            apply("<?php", patch)
+@pytest.mark.asyncio
+async def test_apply_forbidden_dir():
+    """Forbidden directories must be blocked and raise when it's the only patch."""
+    patches = [_patch(target="vendor/malicious.php", filename="vendor/malicious.php")]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+    ):
+        with pytest.raises(PatchApplicationError):
+            await apply_all("container-123", patches)
+
+
+@pytest.mark.asyncio
+async def test_apply_path_traversal():
+    """Path traversal must be blocked and raise when it's the only patch."""
+    patches = [_patch(target="app/../../../.env", filename="app/../../../.env")]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+    ):
+        with pytest.raises(PatchApplicationError):
+            await apply_all("container-123", patches)
+
+
+@pytest.mark.asyncio
+async def test_apply_partial_failure():
+    """When one patch fails and another succeeds, no exception is raised."""
+    patches = [
+        _patch(target=".env", filename=".env"),         # blocked
+        _patch(target="app/Good.php", filename="app/Good.php"),  # should pass
+    ]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+        patch("api.services.sandbox.write_file", AsyncMock()),
+        patch("api.services.sandbox.lint_php", AsyncMock(return_value=(True, "OK"))),
+    ):
+        results = await apply_all("container-123", patches)
+        assert results[".env"] is False
+        assert results["app/Good.php"] is True
+
+
+@pytest.mark.asyncio
+async def test_apply_lint_failure():
+    """A lint failure on the only patch should raise PatchApplicationError."""
+    patches = [_patch(replacement="<?php invalid{{")]
+    container = MagicMock()
+    with (
+        patch("api.services.sandbox.get_container", return_value=container),
+        patch("api.services.sandbox.write_file", AsyncMock()),
+        patch("api.services.sandbox.lint_php", AsyncMock(return_value=(False, "Parse error: syntax error"))),
+    ):
+        with pytest.raises(PatchApplicationError):
+            await apply_all("container-123", patches)

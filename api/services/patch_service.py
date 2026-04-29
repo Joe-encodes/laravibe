@@ -1,125 +1,96 @@
+
 """
-api/services/patch_service.py — Apply AI-suggested patches to PHP code strings.
+api/services/patch_service.py — Container-side code persistence with security guards.
 
-Handles patch actions:
-  - full_replace  replace the ENTIRE file with the given content (preferred/mandatory)
-  - create_file   signal to the repair loop to write a new file (returned as-is)
+Security model:
+  - FORBIDDEN_FILES: filenames the AI must never overwrite
+  - FORBIDDEN_DIRS:  directories that are off-limits
+  - Path normalisation via posixpath.normpath blocks traversal (../../../.env)
+  - PHP syntax is verified in /tmp before writing to the real destination
 
-Legacy actions (replace, append) are kept for backward compatibility.
+Failure policy:
+  - Per-patch failures are logged and recorded but DO NOT abort remaining patches.
+  - Only a complete write failure raises PatchApplicationError.
 """
 import logging
-import re
-from dataclasses import dataclass, field
+import posixpath
+import secrets
+from typing import Dict, List
 
-from api.services.ai_service import PatchSpec
+import api.services.sandbox as sandbox
+from api.services.sandbox import docker
 
 logger = logging.getLogger(__name__)
 
-# Files the AI is not allowed to create or overwrite.
-FORBIDDEN_FILENAMES = frozenset({
-    "routes/api.php",
-    "routes/web.php",
-    "routes/console.php",
-    "routes/channels.php",
-})
+FORBIDDEN_FILES = {
+    ".env", "composer.json", "composer.lock",
+    "artisan", "package.json", "phpunit.xml", "pest.php",
+}
+
+FORBIDDEN_DIRS = {
+    "vendor/", "node_modules/", "storage/", "bootstrap/cache/",
+}
 
 
 class PatchApplicationError(Exception):
-    """Raised when a patch cannot be applied cleanly."""
+    """Raised only when every patch in a batch failed — nothing was written."""
     pass
 
 
-@dataclass
-class ApplyAllResult:
-    """Outcome of processing a full patches list."""
-    updated_code: str
-    created_files: dict[str, str] = field(default_factory=dict)  # rel_path → content
-    actions_taken: list[str] = field(default_factory=list)
-    skipped_forbidden: list[str] = field(default_factory=list)
-
-
-def strip_markdown_fences(code: str) -> str:
-    """Strip ```php ... ``` or ``` ... ``` wrappers from AI output."""
-    code = code.strip()
-    # Match optional language identifier after opening fence
-    pattern = r"```[\w]*\n?(.*?)\n?```"
-    match = re.search(pattern, code, flags=re.DOTALL)
-    if match:
-        return match.group(1)
-    return code
-
-
-
-def _is_forbidden_filename(filename: str) -> bool:
-    """Check if a filename is in the forbidden list (normalizes slashes)."""
-    normalized = filename.replace("\\", "/").strip("/")
-    return normalized in FORBIDDEN_FILENAMES
-
-
-def apply_all(current_code: str, patches: list[PatchSpec]) -> ApplyAllResult:
+async def apply_all(container_id: str, patches: List) -> Dict[str, bool]:
     """
-    Process a list of patches in order.
+    Apply a list of PatchSpec patches to the sandbox container.
 
-    - full_replace patches update current_code.
-    - create_file patches are collected into created_files for the caller.
-    - Forbidden filenames are skipped with a warning (not an exception).
-
-    Returns an ApplyAllResult with updated_code, created_files dict, and
-    tracking lists.
+    Returns a dict mapping filename → True/False (success/failure).
+    Individual patch failures do NOT raise; only a total-failure raises.
     """
-    result = ApplyAllResult(updated_code=current_code)
+    results: dict[str, bool] = {}
+    container = sandbox.get_container(container_id)
 
     for patch in patches:
-        if patch.action == "create_file" and patch.filename and _is_forbidden_filename(patch.filename):
-            logger.warning(f"[Patch] BLOCKED forbidden create_file target: {patch.filename}")
-            result.skipped_forbidden.append(patch.filename)
-            result.actions_taken.append(f"BLOCKED:{patch.filename}")
+        filename = patch.filename or patch.target
+        if not filename:
+            logger.warning("[Patch] Skipping patch with no filename/target.")
             continue
 
-        new_code = apply(result.updated_code, patch)
+        # ── Security: normalize and validate path ────────────────────────────
+        safe_path = posixpath.normpath(filename).lstrip("/")
 
-        if patch.action == "create_file":
-            assert patch.filename is not None, "create_file must have a filename"
-            content = strip_markdown_fences(patch.replacement)
-            result.created_files[patch.filename] = content
-            result.actions_taken.append("create_file")
-        else:
-            result.updated_code = new_code
-            result.actions_taken.append(patch.action)
+        if (
+            any(safe_path.endswith(f) for f in FORBIDDEN_FILES)
+            or any(safe_path.startswith(d) for d in FORBIDDEN_DIRS)
+            or ".." in safe_path
+        ):
+            logger.error(f"[Patch] BLOCKED forbidden path: {filename!r}")
+            results[filename] = False
+            continue
 
-    return result
+        # ── Lint in /tmp before touching the real destination ────────────────
+        tmp_path = f"/tmp/lint_{secrets.token_hex(8)}.php"
+        try:
+            await sandbox.write_file(container, tmp_path, patch.replacement)
+            lint_ok, lint_msg = await sandbox.lint_php(container, tmp_path)
 
+            if not lint_ok:
+                logger.error(f"[Patch] Lint failed for {filename!r}: {lint_msg}")
+                results[filename] = False
+                continue  # skip this file, try the next patch
 
-def apply(current_code: str, patch: PatchSpec) -> str:
-    """
-    Apply a single patch to current_code and return the new code string.
-    create_file action returns current_code unchanged (caller handles the new file).
-    Raises PatchApplicationError if replacement target is not found.
-    """
-    replacement = strip_markdown_fences(patch.replacement)
+            # ── Write to real destination ────────────────────────────────────
+            await sandbox.write_file(container, filename, patch.replacement)
+            logger.info(f"[Patch] Applied {patch.action!r} → {filename!r}")
+            results[filename] = True
 
-    if patch.action == "full_replace":
-        if not replacement:
-            raise PatchApplicationError("Patch action='full_replace' but replacement content is empty.")
-        logger.debug(f"[Patch] full_replace: rewrote entire file ({len(replacement)} chars)")
-        return replacement
+        except Exception as exc:
+            logger.error(f"[Patch] Write failed for {filename!r}: {exc}")
+            results[filename] = False
+            
+        finally:
+            await docker.execute(container, f"rm -f {tmp_path}")
 
-    elif patch.action in ("replace", "append"):
+    if results and not any(results.values()):
         raise PatchApplicationError(
-            f"Patch action='{patch.action}' is no longer permitted. "
-            f"Use 'full_replace' for the submitted file or 'create_file' for new dependency files."
+            f"Every patch failed to apply: {list(results.keys())}"
         )
 
-    elif patch.action == "create_file":
-        if not patch.filename:
-            raise PatchApplicationError("Patch action='create_file' but no 'filename' provided.")
-        if _is_forbidden_filename(patch.filename):
-            raise PatchApplicationError(
-                f"FORBIDDEN: AI attempted to create/overwrite '{patch.filename}'. "
-                f"Route files are managed by the sandbox."
-            )
-        logger.debug(f"[Patch] create_file: signalled for {patch.filename} — current_code unchanged")
-        return current_code
-
-    else:
-        raise PatchApplicationError(f"Unknown patch action: {patch.action!r}")
+    return results

@@ -1,14 +1,17 @@
+
 """
 api/routers/history.py — GET /api/history endpoint.
 Returns last 20 submissions for the history panel.
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc
+from sqlalchemy.orm import selectinload
 
 from api.database import get_db
 from api.models import Submission
-from api.schemas import HistoryItem, SubmissionResponse
+from api.schemas import HistoryItem, SubmissionOut
+from api.services.auth_service import get_current_user
 
 router = APIRouter(prefix="/api", tags=["history"])
 
@@ -17,6 +20,7 @@ router = APIRouter(prefix="/api", tags=["history"])
 async def get_history(
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     """Return the last `limit` submissions (default 20), newest first."""
     result = await db.execute(
@@ -27,19 +31,13 @@ async def get_history(
     return result.scalars().all()
 
 
-@router.get("/history/{submission_id}", response_model=SubmissionResponse)
+@router.get("/history/{submission_id}", response_model=SubmissionOut)
 async def get_history_detail(
     submission_id: str,
     db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(get_current_user),
 ):
     """Return full details for a single submission by ID."""
-    from fastapi import HTTPException
-    
-    # We load the submission, but since iterations/tests are lazy-loaded by default,
-    # we need to join load them or rely on schema loading.
-    # We will use selectinload to eagerly load the relationships.
-    from sqlalchemy.orm import selectinload
-    
     result = await db.execute(
         select(Submission)
         .options(

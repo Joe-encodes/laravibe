@@ -57,8 +57,8 @@
 - [x] ✅ `models.py` — ORM: `Submission`, `Iteration`, `RepairSummary` tables
 - [x] ✅ `schemas.py` — Pydantic v2 request/response models
 - [x] ✅ `logging_config.py` — unified console + rotating file handler (10 MB × 5 backups), `submission_id` context field
-- [x] ✅ 11 service modules: `docker_service`, `sandbox_service`, `boost_service`, `ai_service`, `patch_service`, `repair_service`, `escalation_service`, `context_service`, `evaluation_service`, `auth_service`, `limiter`
-- [x] ✅ 6 router modules: `health`, `repair`, `history`, `evaluate`, `stats`, `admin`
+- [x] ✅ 11 service modules: `docker.py`, `laravel.py`, `testing.py`, `boost_service`, `ai_service`, `patch_service`, `orchestrator.py`, `pipeline.py`, `escalation_service`, `context_service`, `evaluation_service`, `auth_service`, `limiter`
+- [x] ✅ Modular repair logic in `api/services/repair/`
 - [x] ✅ Server runs on Uvicorn ASGI
 
 ### 2.2 API Endpoints
@@ -88,25 +88,27 @@
 - [x] ✅ Loop terminates on success (exec OK + Pest pass + mutation ≥ threshold)
 - [x] ✅ Loop terminates on exhaustion
 - [x] ✅ **Single persistent container** per submission (V2 model — not fresh per iteration)
+- [x] ✅ **Post-Mortem Analysis**: Critic role intercepts failures to guide the next iteration
+- [x] ✅ **Zoom-In Discovery**: Reflection-based signature extraction for referenced classes
 - [x] ✅ Iteration counter tracked and emitted as `iteration_start` SSE event
 - [x] ✅ Each iteration saved to DB before loop continues
 - [x] ✅ `ai_model_used` persisted per iteration (critical for research data)
 - [x] ✅ Partial `mutation_score` stored even on failed iterations
 
 ### 3.2 13-Step Sequence Per Iteration
-- [x] ✅ **Step 1**: `copy_code()` — code written via tar stream
-- [x] ✅ **Step 2**: `php -l` lint gate
-- [x] ✅ **Step 3**: `detect_class_info()` — namespace + classname + FQCN
-- [x] ✅ **Step 4**: `place_code_in_laravel()` — PSR-4 placement + Tinker validation
-- [x] ✅ **Step 5**: `scaffold_route()` — BEFORE boost so route:list sees the route
+- [x] ✅ **Step 1**: `docker.copy_code()` — code written via tar stream (INITIAL BOOTSTRAP)
+- [x] ✅ **Step 2**: `sandbox.detect_class_info()` — namespace + classname + FQCN
+- [x] ✅ **Step 3**: `sandbox.setup_sqlite()` — SCRATCH DB + BASE CONTROLLER SCAFFOLD
+- [x] ✅ **Step 4**: `sandbox.place_code_in_laravel()` — PSR-4 placement + Tinker validation
+- [x] ✅ **Step 5**: `sandbox.scaffold_route()` — BEFORE boost so route:list sees the route
 - [x] ✅ **Step 6**: `boost_service.query_context()` — schema + docs from inside container
-- [x] ✅ **Step 7**: `context_service.retrieve_similar_repairs()` — sliding window memory
-- [x] ✅ **Step 8**: `escalation_service.build_escalation_context()` — stuck loop detection
+- [x] ✅ **Step 7**: `context.retrieve_similar_repairs()` — sliding window memory
+- [x] ✅ **Step 8**: `escalation.build_escalation_context()` — stuck loop detection
 - [x] ✅ **Step 9**: `ai_service.get_repair()` — LLM call with full context
-- [x] ✅ **Step 10**: `ensure_covers_directive()` — injects `covers()` if missing
+- [x] ✅ **Step 10**: `testing.ensure_covers_directive()` — injects `covers()` if missing
 - [x] ✅ **Step 11**: `patch_service.apply_all()` — applies patches, handles forbidden files
-- [x] ✅ **Step 12**: `run_pest_test()` — baseline HTTP gate
-- [x] ✅ **Step 13**: `run_mutation_test()` — mutation gate (if AI test present)
+- [x] ✅ **Step 12**: `testing.run_pest_test()` — baseline HTTP gate
+- [x] ✅ **Step 13**: `testing.run_mutation_test()` — mutation gate (if AI test present)
 
 ### 3.3 Stopping Conditions
 - [x] ✅ Success: exec OK + Pest pass + mutation ≥ `MUTATION_SCORE_THRESHOLD`
@@ -142,7 +144,7 @@
 - [x] ✅ Dashscope / Alibaba (`deepseek-v3`, `qwen-max`)
 - [x] ✅ Groq (`llama-3.3-70b-versatile`)
 - [x] ✅ Cerebras (`llama-3.3-70b`)
-- [x] ✅ Gemini (`gemini-2.0-flash`, `gemini-2.5-flash`)
+- [x] ✅ Gemini 2.0 (`gemini-2.0-flash`) — primary model
 - [x] ✅ DeepSeek (`deepseek-coder`) via OpenAI-compatible endpoint
 - [x] ✅ OpenAI (`gpt-4o`)
 - [x] ✅ Anthropic Claude via `anthropic` SDK
