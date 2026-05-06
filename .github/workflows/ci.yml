@@ -21,11 +21,9 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        working-directory: repair-platform
         run: pip install -r requirements-dev.txt
 
       - name: Run pytest (mocked)
-        working-directory: repair-platform
         env:
           ANTHROPIC_API_KEY: "test-key"
           DEFAULT_AI_PROVIDER: "anthropic"
@@ -39,7 +37,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build laravel-sandbox image
-        working-directory: repair-platform
         run: |
           docker build -t laravel-sandbox:ci ./docker/laravel-sandbox/
 
@@ -70,11 +67,9 @@ jobs:
           cache: pip
 
       - name: Install dependencies
-        working-directory: repair-platform
         run: pip install -r requirements.txt
 
       - name: Start API and check /health
-        working-directory: repair-platform
         env:
           ANTHROPIC_API_KEY: "ci-key"
           DEFAULT_AI_PROVIDER: "anthropic"
@@ -89,4 +84,4 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: repair-platform/tests/integration/results/
+          path: tests/integration/results/
