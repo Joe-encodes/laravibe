@@ -6,7 +6,7 @@ from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import sys
-from typing import Union
+from typing import Union, Any
 
 
 class Settings(BaseSettings):
@@ -17,14 +17,6 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # ... (other fields)
-    
-    @field_validator("allowed_origins", mode="before")
-    @classmethod
-    def parse_allowed_origins(cls, v: Union[str, list[str]]) -> list[str]:
-        if isinstance(v, str):
-            return [item.strip() for item in v.split(",") if item.strip()]
-        return v
 
     # ── Environment ─────────────────────────────────────────────────────────
     # Set to "production" on Koyeb. Defaults to "development" for WSL.
@@ -39,12 +31,20 @@ class Settings(BaseSettings):
     access_token_expire_minutes: int = 60 * 24  # 1 day
     # CORS: comma-separated list of allowed origins.
     # In production, this should be your Koyeb URL.
-    allowed_origins: list[str] = [
+    allowed_origins: Union[str, list[str]] = [
         "http://localhost:3000", 
         "http://localhost:5173", 
         "http://127.0.0.1:3000",
-        "https://laravibe.koyeb.app", # Add your Koyeb URL here
+        "https://laravibe.koyeb.app",
     ]
+
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            # If it's a string, it's likely a comma-separated list from the environment
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     # ── AI Provider ──────────────────────────────────────────────────────────
     # Free providers (recommended)
