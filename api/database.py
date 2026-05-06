@@ -27,19 +27,29 @@ def get_engine():
     global _engine
     if _engine is None:
         settings = get_settings()
-        Path("data").mkdir(exist_ok=True)
+        db_url = settings.database_url
+        
+        is_sqlite = db_url.startswith("sqlite")
+        
+        # SQLite specific args
+        connect_args = {}
+        if is_sqlite:
+            Path("data").mkdir(exist_ok=True)
+            connect_args = {"check_same_thread": False, "timeout": 30}
+            
         _engine = create_async_engine(
-            settings.database_url,
+            db_url,
             echo=settings.debug,
-            connect_args={"check_same_thread": False, "timeout": 30},
+            connect_args=connect_args,
         )
         
-        @event.listens_for(_engine.sync_engine, "connect")
-        def set_sqlite_pragma(dbapi_connection, connection_record):
-            cursor = dbapi_connection.cursor()
-            cursor.execute("PRAGMA synchronous = NORMAL;")
-            cursor.execute("PRAGMA journal_mode = WAL;")
-            cursor.close()
+        if is_sqlite:
+            @event.listens_for(_engine.sync_engine, "connect")
+            def set_sqlite_pragma(dbapi_connection, connection_record):
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA synchronous = NORMAL;")
+                cursor.execute("PRAGMA journal_mode = WAL;")
+                cursor.close()
             
     return _engine
 
@@ -82,7 +92,7 @@ async def create_tables() -> None:
             "ALTER TABLE iterations ADD COLUMN pm_category VARCHAR(50)",
             "ALTER TABLE iterations ADD COLUMN pm_strategy TEXT",
             "ALTER TABLE iterations ADD COLUMN pipeline_logs TEXT",
-            "ALTER TABLE submissions ADD COLUMN is_cancelled BOOLEAN DEFAULT 0",
+            "ALTER TABLE submissions ADD COLUMN is_cancelled BOOLEAN DEFAULT FALSE",
             "ALTER TABLE submissions ADD COLUMN container_id VARCHAR(64)",
         ]
         for sql in migrations:
