@@ -27,11 +27,11 @@ else
 fi
 
 # 4. Launch with Gunicorn
-# Using 4 workers and UvicornWorker for high performance async processing.
+# Using 2 workers and UvicornWorker for stability on 1GB RAM instances.
 # We bind to 0.0.0.0 to allow Koyeb to route traffic to the container.
 echo ">>> Launching Gunicorn..."
 exec gunicorn api.main:app \
-    --workers 4 \
+    --workers 2 \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind 0.0.0.0:$PORT \
     --access-logfile - \
