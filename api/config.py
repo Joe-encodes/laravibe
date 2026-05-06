@@ -2,9 +2,11 @@
 api/config.py — Application settings loaded from .env via Pydantic Settings.
 All config is centralised here. Never read env vars directly anywhere else.
 """
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import sys
+from typing import Union
 
 
 class Settings(BaseSettings):
@@ -14,6 +16,15 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    # ... (other fields)
+    
+    @field_validator("allowed_origins", mode="before")
+    @classmethod
+    def parse_allowed_origins(cls, v: Union[str, list[str]]) -> list[str]:
+        if isinstance(v, str):
+            return [item.strip() for item in v.split(",") if item.strip()]
+        return v
 
     # ── Environment ─────────────────────────────────────────────────────────
     # Set to "production" on Koyeb. Defaults to "development" for WSL.
