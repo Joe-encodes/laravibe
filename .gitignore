@@ -18,28 +18,33 @@ __pycache__/
 /data/
 batch_eval_debug.log
 scratch_verify.py
-
-# Internal Developer Docs (not for repo)
-BE_CHECKLIST.md
-AI_REDESIGN_Specs.md
-
-# Scratch / Dev Scripts
-scratch/
+dump.rdb
+payload.json
+detail.json
+current_results.json
+submission_resp.json
+session_token.json
 
 # Logs
 *.log
-*.json
-*.rdb
-*.txt
+*_log.txt
+repair_stream.log
+api_restart.log
+server_log.txt
+worker_log.txt
+
+# Scratch / Dev Scripts
+scratch/
 scratch.py
 test_code.php
+test_minimal.py
+test_repair_v4.py
+live_test_runner.py
 
 # IDEs & OS
 .vscode/
 .idea/
 .DS_Store
-
-# AI Agent Data
 .agents/
 .claude/
 .cursor/
@@ -47,10 +52,5 @@ test_code.php
 # Frontend
 laravibe-fe/node_modules/
 laravibe-fe/dist/
-laravibe-fe/.env.local
-laravibe-fe/.env.development.local
-laravibe-fe/.env.test.local
-laravibe-fe/.env.production.local
-laravibe-fe/npm-debug.log*
-laravibe-fe/yarn-debug.log*
-laravibe-fe/yarn-error.log*
+laravibe-fe/.env*
+laravibe-fe/*.log
