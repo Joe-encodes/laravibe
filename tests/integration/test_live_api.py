@@ -11,7 +11,8 @@ import httpx
 import pytest
 
 BASE_URL = "http://localhost:8000"
-TOKEN = "laravibe-repair-2026-safe-token"
+import os
+TOKEN = os.getenv("REPAIR_TOKEN", "change-me-in-production")
 AUTH_HEADER = {"Authorization": f"Bearer {TOKEN}"}
 
 # ---------------------------------------------------------------------------

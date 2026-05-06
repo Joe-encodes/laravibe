@@ -57,6 +57,6 @@ async def test_sequential_repair_runs_do_not_leak_resources(mock_db):
             patch("api.redis_client.publish_event", AsyncMock()), # Mocking publish to avoid actual Redis dependency in unit test
         ):
             events = await _collect(run_repair_loop(sub_id, "<?php", None, mock_db))
-            assert any(e["type"] == "repair_success" for e in events)
+            assert any(e.get("event") == "complete" and e.get("data", {}).get("status") == "success" for e in events)
 
     # If we reach here, the sequence of 5 runs finished without crashing.

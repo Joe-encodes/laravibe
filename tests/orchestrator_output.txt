@@ -1,0 +1,49 @@
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-8.2.0, pluggy-1.6.0 -- /mnt/c/Users/ESTHER/Desktop/Joseph's Project/laravel-ai-proj/repair-platform/venv/bin/python3
+cachedir: .pytest_cache
+rootdir: /mnt/c/Users/ESTHER/Desktop/Joseph's Project/laravel-ai-proj/repair-platform
+configfile: pytest.ini
+plugins: anyio-4.13.0, asyncio-0.23.7, mock-3.14.0
+asyncio: mode=Mode.AUTO
+collecting ... collected 5 items
+
+tests/repair/test_orchestrator.py::TestOrchestrator::test_success_path FAILED [ 20%]
+tests/repair/test_orchestrator.py::TestOrchestrator::test_zero_patches_escalates FAILED [ 40%]
+tests/repair/test_orchestrator.py::TestOrchestrator::test_pest_syntax_error_retry FAILED [ 60%]
+tests/repair/test_orchestrator.py::TestOrchestrator::test_phpstan_failure_logged FAILED [ 80%]
+tests/repair/test_orchestrator.py::TestOrchestrator::test_mutation_failure_logged FAILED [100%]
+
+=================================== FAILURES ===================================
+______________________ TestOrchestrator.test_success_path ______________________
+tests/repair/test_orchestrator.py:120: in test_success_path
+    assert "patch_applied" in types
+E   AssertionError: assert 'patch_applied' in {'complete', 'error_detected', 'iteration_start', 'log_line'}
+_________________ TestOrchestrator.test_zero_patches_escalates _________________
+tests/repair/test_orchestrator.py:143: in test_zero_patches_escalates
+    assert any(e.get("event") == "error" for e in events)
+E   assert False
+E    +  where False = any(<generator object TestOrchestrator.test_zero_patches_escalates.<locals>.<genexpr> at 0x7e502e2db850>)
+________________ TestOrchestrator.test_pest_syntax_error_retry _________________
+tests/repair/test_orchestrator.py:168: in test_pest_syntax_error_retry
+    assert not any(e.get("event") == "complete" and e.get("data", {}).get("status") == "success" for e in events)
+E   assert not True
+E    +  where True = any(<generator object TestOrchestrator.test_pest_syntax_error_retry.<locals>.<genexpr> at 0x7e502e2d5540>)
+_________________ TestOrchestrator.test_phpstan_failure_logged _________________
+tests/repair/test_orchestrator.py:191: in test_phpstan_failure_logged
+    added_it = [c[0][0] for c in mock_db.add.call_args_list if isinstance(c[0][0], Iteration)][0]
+E   IndexError: list index out of range
+________________ TestOrchestrator.test_mutation_failure_logged _________________
+tests/repair/test_orchestrator.py:214: in test_mutation_failure_logged
+    assert not any(e.get("event") == "complete" and e.get("data", {}).get("status") == "success" for e in events)
+E   assert not True
+E    +  where True = any(<generator object TestOrchestrator.test_mutation_failure_logged.<locals>.<genexpr> at 0x7e5034ba4d60>)
+=========================== short test summary info ============================
+FAILED tests/repair/test_orchestrator.py::TestOrchestrator::test_success_path - AssertionError: assert 'patch_applied' in {'complete', 'error_detected', 'iteration_start', 'log_line'}
+FAILED tests/repair/test_orchestrator.py::TestOrchestrator::test_zero_patches_escalates - assert False
+ +  where False = any(<generator object TestOrchestrator.test_zero_patches_escalates.<locals>.<genexpr> at 0x7e502e2db850>)
+FAILED tests/repair/test_orchestrator.py::TestOrchestrator::test_pest_syntax_error_retry - assert not True
+ +  where True = any(<generator object TestOrchestrator.test_pest_syntax_error_retry.<locals>.<genexpr> at 0x7e502e2d5540>)
+FAILED tests/repair/test_orchestrator.py::TestOrchestrator::test_phpstan_failure_logged - IndexError: list index out of range
+FAILED tests/repair/test_orchestrator.py::TestOrchestrator::test_mutation_failure_logged - assert not True
+ +  where True = any(<generator object TestOrchestrator.test_mutation_failure_logged.<locals>.<genexpr> at 0x7e5034ba4d60>)
+============================== 5 failed in 43.14s ==============================

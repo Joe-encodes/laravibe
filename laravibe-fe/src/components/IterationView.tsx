@@ -16,9 +16,10 @@ export const IterationView: React.FC = () => {
     const load = async () => {
       console.info('[LaraVibe] Loading iteration details...', { submissionId });
       try {
+        const sessionToken = localStorage.getItem('laravibe_session_token');
         const res = await fetch(`/api/repair/${submissionId}`, {
           headers: {
-            'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+            'Authorization': `Bearer ${sessionToken}`
           }
         });
         console.info('[LaraVibe] Repair API Response:', { status: res.status });
@@ -66,7 +67,7 @@ export const IterationView: React.FC = () => {
             <h1 className="text-4xl font-mono font-black text-on-surface tracking-tighter leading-none mb-3 uppercase italic">
               REPAIR_CYCLE_SUMMARY
             </h1>
-            <div className="flex items-center gap-2 text-on-surface-variant max-w-2xl font-sans text-sm">
+            <div className="flex items-center gap-2 text-on-surface-variant max-w-2xl font-mono text-sm">
               <Terminal className="w-4 h-4 shrink-0 text-primary" />
               <span>Target analysis completed with <span className="text-primary font-bold">{submission.iterations?.length || 0} iterations</span>. Logic verified against Pest test suite.</span>
             </div>
@@ -137,7 +138,7 @@ export const IterationView: React.FC = () => {
                    {iter.error_logs && (
                      <div className="flex gap-2">
                        <AlertCircle className="w-3 h-3 text-error shrink-0 mt-0.5" />
-                       <div className="text-error/80 leading-relaxed font-sans text-[10px]">
+                       <div className="text-error/80 leading-relaxed font-mono text-[10px]">
                          {iter.error_logs.substring(0, 150)}...
                        </div>
                      </div>
@@ -145,7 +146,7 @@ export const IterationView: React.FC = () => {
                    {iter.patch_applied && (
                      <div className="flex gap-2">
                        <CheckCircle2 className="w-3 h-3 text-secondary shrink-0 mt-0.5" />
-                       <div className="text-on-surface-variant font-sans text-[10px]">
+                       <div className="text-on-surface-variant font-mono text-[10px]">
                          {iter.patch_applied}
                        </div>
                      </div>
@@ -205,32 +206,33 @@ export const IterationView: React.FC = () => {
                   className="p-8 space-y-8"
                 >
                   <div className="grid grid-cols-2 gap-6">
-                    <div className="bg-surface-container-high border border-outline-variant p-6 rounded-lg">
+                    <div className="glassmorphism p-6 rounded-lg">
                       <div className="flex items-center gap-2 mb-4">
                         <Terminal className="w-4 h-4 text-primary" />
-                        <span className="font-mono text-[10px] font-black uppercase tracking-widest text-primary">System_Research_Prompt</span>
+                        <span className="font-mono text-[11px] font-black uppercase tracking-widest text-primary">System_Research_Prompt</span>
                       </div>
-                      <pre className="text-[10px] text-on-surface-variant bg-surface-container-low p-4 rounded border border-outline-variant/50 overflow-auto max-h-[400px] whitespace-pre-wrap leading-relaxed">
+                      <pre className="text-[11px] text-on-surface-variant bg-transparent overflow-auto max-h-[400px] whitespace-pre-wrap leading-relaxed custom-scrollbar">
                         {submission.iterations?.[selectedIteration]?.ai_prompt || 'AUDIT_DATA_RESTRICTED'}
                       </pre>
                     </div>
-                    <div className="bg-surface-container-high border border-outline-variant p-6 rounded-lg">
+                    <div className="glassmorphism p-6 rounded-lg">
                       <div className="flex items-center gap-2 mb-4 text-secondary">
                         <Brain className="w-4 h-4" />
-                        <span className="font-mono text-[10px] font-black uppercase tracking-widest">LLM_Logic_Response</span>
+                        <span className="font-mono text-[11px] font-black uppercase tracking-widest">LLM_Logic_Response</span>
                       </div>
-                      <pre className="text-[10px] text-on-surface-variant bg-surface-container-low p-4 rounded border border-outline-variant/50 overflow-auto max-h-[400px] whitespace-pre-wrap leading-relaxed">
+                      <pre className="text-[11px] text-on-surface-variant bg-transparent overflow-auto max-h-[400px] whitespace-pre-wrap leading-relaxed custom-scrollbar">
                         {submission.iterations?.[selectedIteration]?.ai_response || 'AUDIT_DATA_RESTRICTED'}
                       </pre>
                     </div>
                   </div>
                   
-                  <div className="bg-surface-container-high border border-outline-variant p-6 rounded-lg">
-                    <div className="flex items-center gap-2 mb-4 text-tertiary text-emerald-400">
+                  <div className="glassmorphism p-6 rounded-lg relative overflow-hidden">
+                    <div className="absolute inset-0 bg-emerald-500/5 mix-blend-overlay"></div>
+                    <div className="flex items-center gap-2 mb-4 text-tertiary text-emerald-400 relative z-10">
                       <CheckCircle2 className="w-4 h-4" />
-                      <span className="font-mono text-[10px] font-black uppercase tracking-widest">Generated_Pest_Test_Suite</span>
+                      <span className="font-mono text-[11px] font-black uppercase tracking-widest">Generated_Pest_Test_Suite</span>
                     </div>
-                    <pre className="text-[10px] text-emerald-400/90 bg-emerald-500/5 p-4 rounded border border-emerald-500/20 overflow-auto max-h-[400px] whitespace-pre-wrap">
+                    <pre className="text-[11px] text-emerald-400/90 bg-transparent overflow-auto max-h-[400px] whitespace-pre-wrap relative z-10 custom-scrollbar">
                       {submission.iterations?.[selectedIteration]?.pest_test_code || 'UNIT_TESTS_NOT_GENERATED'}
                     </pre>
                   </div>
@@ -260,7 +262,7 @@ export const IterationView: React.FC = () => {
                   className="min-w-full p-8"
                 >
                   <div className="flex gap-6">
-                    <div className="text-outline/30 text-right select-none pr-4 border-r border-outline-variant/10 leading-relaxed font-sans text-[10px] w-6">
+                    <div className="text-outline/30 text-right select-none pr-4 border-r border-outline-variant/10 leading-relaxed font-mono text-[10px] w-6">
                       {(tab === 'original' ? submission.original_code : submission.final_code)?.split('\n').map((_, i) => (
                         <div key={i}>{i + 1}</div>
                       ))}

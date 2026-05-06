@@ -1,22 +1,7 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-export const MASTER_REPAIR_TOKEN = import.meta.env.VITE_MASTER_REPAIR_TOKEN || 'change-me-in-production';
+// Session token — set by LoginView after /api/auth/login exchange. NEVER hardcoded.
+export const getSessionToken = (): string | null => localStorage.getItem('laravibe_session_token');
+// Legacy compat alias — use getSessionToken() for new code
+export const MASTER_REPAIR_TOKEN = getSessionToken() ?? '';
 
-export const INITIAL_PHP_CODE = `<?php
-
-namespace App\\Http\\Controllers;
-
-use App\\Models\\User;
-use Illuminate\\Http\\Request;
-
-class UserController extends Controller
-{
-    public function update(Request $request, $id)
-    {
-        // BUG: Missing validation
-        // BUG: Insecure mass assignment
-        $user = User::find($id);
-        $user->update($request->all());
-        
-        return response()->json($user);
-    }
-}`;
+export const INITIAL_PHP_CODE = ``;

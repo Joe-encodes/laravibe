@@ -29,6 +29,7 @@ FORBIDDEN_FILES = {
 
 FORBIDDEN_DIRS = {
     "vendor/", "node_modules/", "storage/", "bootstrap/cache/",
+    "tests/fixtures/",  # AI must never patch the source fixture — only the real Laravel PSR-4 destination
 }
 
 
@@ -65,8 +66,8 @@ async def apply_all(container_id: str, patches: List) -> Dict[str, bool]:
             results[filename] = False
             continue
 
-        # ── Lint in /tmp before touching the real destination ────────────────
-        tmp_path = f"/tmp/lint_{secrets.token_hex(8)}.php"
+        # ── Lint in a hidden sandbox dir before touching the real destination 
+        tmp_path = f".repair_lint/lint_{secrets.token_hex(8)}.php"
         try:
             await sandbox.write_file(container, tmp_path, patch.replacement)
             lint_ok, lint_msg = await sandbox.lint_php(container, tmp_path)

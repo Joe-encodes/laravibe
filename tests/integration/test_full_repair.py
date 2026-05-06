@@ -22,7 +22,8 @@ SKIP = not os.getenv("INTEGRATION")  # set INTEGRATION=1 to run
 pytestmark = pytest.mark.skipif(SKIP, reason="Set INTEGRATION=1 to run integration tests")
 
 
-AUTH_HEADERS = {"Authorization": "Bearer change-me-in-production"}
+TOKEN = os.getenv("REPAIR_TOKEN", "change-me-in-production")
+AUTH_HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _submit_and_wait(code: str, max_iter: int = 4, timeout: int = 300) -> dict:

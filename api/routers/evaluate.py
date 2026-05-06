@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.database import get_db, AsyncSessionLocal
 from api.models import Submission
 from api.schemas import EvaluateResponse, EvaluateCaseResult
+from api.services.auth_service import get_current_user
 
 router = APIRouter(prefix="/api", tags=["evaluate"])
 
@@ -25,11 +26,21 @@ MANIFEST_PATH = pathlib.Path("batch_manifest.yaml")
 
 
 def _load_manifest() -> dict:
-    """Load and validate the batch manifest YAML."""
-    assert MANIFEST_PATH.exists(), f"Manifest not found at {MANIFEST_PATH}"
+    """Load and validate the batch manifest YAML. Raises HTTPException on bad config."""
+    from fastapi import HTTPException
+    if not MANIFEST_PATH.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Batch manifest not found at '{MANIFEST_PATH}'. "
+                   "Create batch_manifest.yaml in the project root before running evaluations.",
+        )
     with open(MANIFEST_PATH, "r", encoding="utf-8") as f:
         manifest = yaml.safe_load(f)
-    assert "cases" in manifest, "Manifest must contain a 'cases' list"
+    if "cases" not in manifest:
+        raise HTTPException(
+            status_code=400,
+            detail="batch_manifest.yaml is missing the required 'cases' list.",
+        )
     return manifest
 
 
@@ -187,7 +198,11 @@ async def run_batch_evaluation(experiment_id: str):
 
 
 @router.post("/evaluate", response_model=EvaluateResponse)
-async def evaluate_samples(background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
+async def evaluate_samples(
+    background_tasks: BackgroundTasks, 
+    db: AsyncSession = Depends(get_db),
+    _user: dict = Depends(get_current_user),
+):
     """
     Start batch evaluation of all test cases in background.
     Returns evaluation ID for status checking.
@@ -210,7 +225,10 @@ async def evaluate_samples(background_tasks: BackgroundTasks, db: AsyncSession =
 
 
 @router.get("/evaluate/{experiment_id}")
-async def get_evaluation_status(experiment_id: str):
+async def get_evaluation_status(
+    experiment_id: str,
+    _user: dict = Depends(get_current_user),
+):
     """
     Check status and results of a batch evaluation.
     """

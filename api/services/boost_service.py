@@ -92,46 +92,41 @@ async def query_context(container_or_id, error_text: str, submission_id: str | N
 async def _fetch_boost_context(container, error_text: str) -> BoostContext:
     """Run Boost artisan commands inside the container."""
 
-    # 1. Get schema info — try boost:schema, fallback to model:show
-    schema_result = await docker_service.execute(
+    # 1. Query Route List (The application surface area)
+    route_result = await docker_service.execute(
         container,
-        "php artisan boost:schema --format=text 2>&1",
-        timeout=30,
+        "php artisan route:list --json --except-vendor 2>&1",
+        timeout=20,
     )
     schema_info = ""
-    if schema_result.exit_code == 0:
-        schema_info = schema_result.stdout.strip()
+    if route_result.exit_code == 0:
+        schema_info = f"### ROUTES\n{route_result.stdout.strip()}"
     else:
-        # Fallback: list tables or show models if possible
-        logger.debug("[Boost] boost:schema failed, trying native fallbacks")
+        # Fallback to simple list if --json fails
+        fallback = await docker_service.execute(container, "php artisan route:list --except-vendor")
+        stdout = fallback.stdout.strip()
+        if stdout:
+            schema_info = f"### ROUTES (text)\n{stdout}"
+        else:
+            schema_info = "No schema info available."
+
+    # 2. Query App Environment/Packages
+    about_result = await docker_service.execute(
+        container,
+        "php artisan about --json 2>&1",
+        timeout=20,
+    )
+    docs_excerpts = []
+    if about_result.exit_code == 0:
+        docs_excerpts.append(f"### ENVIRONMENT & PACKAGES\n{about_result.stdout.strip()}")
+    else:
+        # Fallback to model list to show data structure
         fallback = await docker_service.execute(container, "php artisan model:show --all 2>&1")
         if fallback.exit_code == 0:
-            schema_info = fallback.stdout.strip()
-
-    # 2. Get relevant docs excerpt — extract error type for query
-    error_type = _extract_error_type(error_text)
-    safe_query = shlex.quote(error_type)
-    docs_result = await docker_service.execute(
-        container,
-        f"php artisan boost:docs --query={safe_query} --limit=3 2>&1",
-        timeout=30,
-    )
-    docs_raw = ""
-    if docs_result.exit_code == 0:
-        docs_raw = docs_result.stdout.strip()
-    else:
-        # Fallback: just list routes to give some idea of the app structure
-        fallback = await docker_service.execute(container, "php artisan route:list --except-vendor 2>&1")
-        if fallback.exit_code == 0:
-            docs_raw = f"Note: boost:docs unavailable. Current routes:\n{fallback.stdout.strip()}"
-    docs_excerpts = [d.strip() for d in docs_raw.split("\n---\n") if d.strip()]
+            docs_excerpts.append(f"### MODELS\n{fallback.stdout.strip()}")
 
     # 3. Detect component type from error
     component_type = _detect_component_type(error_text)
-
-    if not schema_info and not docs_excerpts:
-        logger.warning("[Boost] Both commands returned empty — using fallback context")
-        return BoostContext.empty()
 
     return BoostContext(
         schema_info=schema_info,

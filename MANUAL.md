@@ -24,7 +24,8 @@
 14. [MCP Integration (Cursor / Claude Code)](#14-mcp-integration-cursor--claude-code)
 15. [Security Model](#15-security-model)
 16. [Thesis Batch Evaluation](#16-thesis-batch-evaluation)
-17. [Troubleshooting](#17-troubleshooting)
+17. [Administrative Controls](#17-administrative-controls)
+18. [Troubleshooting](#18-troubleshooting)
 
 ---
 
@@ -69,16 +70,16 @@ FastAPI (repair.py router)
   ▼
 repair_service.run_repair_loop()
   │
-  ├─ docker_service.create_container()  → isolated container spawned
-  ├─ docker_service.copy_code()         → code.php copied in via tar archive
-  ├─ docker_service.execute()           → PHP lint → artisan tinker validation
+  ├─ sandbox.create_container()  → isolated container spawned
+  ├─ docker.copy_code()         → code.php copied in via tar archive
+  ├─ docker.execute()           → PHP lint → artisan tinker validation
   │
   ├─ [if error] boost_service.query_context()   → php artisan boost:schema/docs inside container
-  ├─ [if error] ai_service.get_repair()         → LLM call with full prompt + context
-  ├─ [if error] patch_service.apply()           → diff applied to code string
+  ├─ [if error] ai_service.get_repair()         → LLM call (XML pipeline)
+  ├─ [if error] patch_service.apply_all()       → patches applied to container
   │
   ├─ [if success] Pest test run
-  ├─ [if pest OK] pest --mutate  (mutation gate)
+  ├─ [if pest OK] run_mutation_test()  (mutation gate)
   │
   └─ SSE events streamed back → Browser updates panels live
 ```
@@ -95,57 +96,46 @@ The container is created **once before the loop** and destroyed in `finally`. It
 
 ### Step-by-Step Breakdown
 
-Each iteration (up to `MAX_ITERATIONS`, default 4) follows this exact sequence in [`api/services/repair_service.py`](api/services/repair_service.py):
+Each iteration follows this exact sequence in `api/services/repair/orchestrator.py`:
 
-#### Step 1 — Copy Code
-The current code string is written to `/submitted/code.php` via in-memory tar archive.
+#### Step 1 — Bootstrap
+`docker.copy_code()` writes to `/submitted/code.php`.
 
 #### Step 2 — PHP Lint Gate
-`php -l /submitted/code.php` — fastest syntax check. Fails immediately on syntax errors without entering Laravel.
+`php -l` check to fail fast on syntax errors.
 
 #### Step 3 — Detect Class Info
-`sandbox_service.detect_class_info()` parses namespace and classname via PHP one-liners, builds `ClassInfo` (FQCN, PSR-4 destination path, route resource name).
+`laravel.detect_class_info()` parses namespace and classname.
 
 #### Step 4 — Place Code in Laravel
-`sandbox_service.place_code_in_laravel()` copies to the PSR-4 path, runs `composer dump-autoload`, validates via Tinker. `CLASS_OK` sentinel confirms success.
+`laravel.place_code_in_laravel()` copies to PSR-4 path and runs `composer dump-autoload`.
 
-#### Step 5 — Scaffold Route (BEFORE Boost)
-`sandbox_service.scaffold_route()` appends `Route::apiResource()` to `routes/api.php` idempotently. Runs **before** Boost so `route:list` sees the new route in the context it feeds to the AI.
+#### Step 5 — Scaffold Route
+`laravel.scaffold_route()` registers the API resource.
 
 #### Step 6 — Zoom-In Discovery
-`discovery.py` scans `use` statements and uses `artisan tinker` reflection to fetch public method signatures for referenced classes.
+`discovery.py` scans method signatures via reflection.
 
 #### Step 7 — Query Boost Context
-`boost_service.query_context()` runs inside the container (schema + docs).
+`boost_service.query_context()` fetches schema and docs.
 
-#### Step 8 — Retrieve Similar Past Repairs
-`context_service.retrieve_similar_repairs()` scores the 200-item sliding window.
+#### Step 8 — Memory Recall
+`context_service.retrieve_similar_repairs()` fetches RAG context.
 
-#### Step 9 — Post-Mortem Strategy
-If a previous iteration failed, the **Critic** analyzes logs and generates a `Fix Strategy` JSON.
+#### Step 9 — Post-Mortem Analysis
+`ai_service.get_post_mortem()` (non-fatal) analyzes previous failures.
 
-#### Step 10 — Call AI
-`ai_service.get_repair()` assembles the prompt (including discovery metadata and post-mortem strategy).
+#### Step 10 — Planner Strategy
+The AI designs the fix and chooses which files to create or replace.
 
-#### Step 10 — Ensure `covers()` Directive
-`sandbox_service.ensure_covers_directive()` injects missing `use function Pest\Laravel\{...};` imports and a `covers(ClassName::class);` directive into the AI-generated test.
+#### Step 11 — Executor & Patching
+`patch_service.apply_all()` applies XML patches and creates new dependency files.
 
-#### Step 11 — Apply Patches
-`patch_service.apply_all()` processes the `patches` list:
+#### Step 12 — Functional Gate
+`run_pest_test()` runs the baseline HTTP assertions.
 
-| Action | What Happens |
-|--------|-------------|
-| `full_replace` | Replaces entire submitted file content |
-| `create_file` | New file written to container + `composer dump-autoload` + `php artisan migrate` |
-| `replace` / `append` | **Banned** — raises `PatchApplicationError` immediately |
-
-Forbidden filenames (`routes/api.php` etc.) are blocked silently.
-
-#### Step 12 — Run Pest Test
-System baseline test (`getJson('/api/{resource}')->assertSuccessful()`) runs first. On failure, `capture_laravel_log()` fetches the last 40 lines of Laravel's log to surface the real PHP exception.
-
-#### Step 13 — Run Mutation Gate
-Only runs if an AI-generated test is present. Test is linted first (`php -l`). Then `./vendor/bin/pest --mutate`. Score classified as: `covers_missing` → fail, `dependency_failure` → fail, `infra_failure` → soft-pass, real score → compare to threshold.
+#### Step 13 — Quality Gate
+`run_mutation_test()` ensures the repair is robust.
 
 #### Iteration Result
 Each iteration saved as an `Iteration` row (including partial `mutation_score` even on fails). SSE `complete` event emitted on success or exhaustion.
@@ -179,18 +169,15 @@ repair-platform/
 │   │   ├── stats.py                ← GET /api/stats (aggregate statistics)
 │   │   └── admin.py                ← DELETE /api/admin/submissions/{id}
 │   │
-│   └── services/
-│       ├── __init__.py
-│       ├── docker_service.py       ← Container lifecycle (create/copy/exec/destroy/ping)
-│       ├── sandbox_service.py      ← Laravel helpers (detect class, place code, Pest/mutate, covers)
-│       ├── boost_service.py        ← Boost artisan commands + score-based component detection + caching
-│       ├── ai_service.py           ← LLM routing (ROTATION_CHAIN + FALLBACK_CHAIN, 9 providers)
-│       ├── patch_service.py        ← Patch application (full_replace/create_file; replace/append banned)
-│       ├── escalation_service.py   ← 4-rule stuck loop detection + corrective prompt injection
-│       ├── context_service.py      ← 200-item sliding window memory (store + retrieve similar repairs)
-│       ├── evaluation_service.py   ← Batch evaluation orchestrator
-│       ├── auth_service.py         ← Bearer token validation
-│       └── repair_service.py       ← Main orchestration loop (413 lines)
+│   ├── services/
+│   │   ├── repair/                 ← Orchestration (orchestrator, pipeline, context)
+│   │   ├── sandbox/                ← Container/Laravel logic (manager, docker, testing, laravel)
+│   │   ├── ai_service.py           ← Multi-provider dispatcher & XML parser
+│   │   ├── patch_service.py        ← Patch application & security blocklist
+│   │   ├── boost_service.py        ← Laravel Boost context enrichment
+│   │   ├── context_service.py      ← RAG-lite sliding window memory
+│   │   ├── escalation_service.py   ← Stuck-loop detection
+│   │   └── evaluation_service.py   ← Batch evaluation orchestrator
 │
 ├── docker/
 │   ├── .dockerignore
@@ -1033,7 +1020,24 @@ The manifest supports two ablation flags:
 
 ---
 
-## 17. Troubleshooting
+## 17. Administrative Controls
+
+The platform includes two critical production-grade controls for long-running repairs.
+
+### 17.1 Administrative Kill Switch
+If a repair is stuck or consuming excessive resources, you can terminate it from the dashboard.
+- **Action**: Click the "🛑 Terminate" button on the active repair panel.
+- **Backend**: Calls `DELETE /api/repair/{id}`.
+- **Effect**: Hard-destroys the sandbox container and marks the submission as `cancelled`.
+
+### 17.2 Forensic Playback (Historical Replay)
+You can view the full live logs of any **completed** repair by navigating to its URL (e.g., `/repair/{id}`).
+- **Mechanism**: The SSE stream automatically replays the `pipeline_logs` JSON stored in the database.
+- **Observability**: Replays every event (`ai_thinking`, `pest_result`, etc.) exactly as it happened during the live run.
+
+---
+
+## 18. Troubleshooting
 
 ### `laravel-sandbox:latest` image not found
 

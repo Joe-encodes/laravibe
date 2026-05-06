@@ -31,13 +31,14 @@ def get_engine():
         _engine = create_async_engine(
             settings.database_url,
             echo=settings.debug,
-            connect_args={"check_same_thread": False, "timeout": 15},
+            connect_args={"check_same_thread": False, "timeout": 30},
         )
         
         @event.listens_for(_engine.sync_engine, "connect")
         def set_sqlite_pragma(dbapi_connection, connection_record):
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA synchronous = NORMAL;")
+            cursor.execute("PRAGMA journal_mode = WAL;")
             cursor.close()
             
     return _engine
@@ -67,7 +68,6 @@ async def create_tables() -> None:
 
     engine = get_engine()
     async with engine.begin() as conn:
-        await conn.execute(text("PRAGMA journal_mode=WAL;"))
         await conn.run_sync(Base.metadata.create_all)
 
         # Additive columns for older DBs (ignore if already present)
@@ -77,6 +77,13 @@ async def create_tables() -> None:
             "ALTER TABLE iterations ADD COLUMN planner_model VARCHAR(100)",
             "ALTER TABLE iterations ADD COLUMN executor_model VARCHAR(100)",
             "ALTER TABLE iterations ADD COLUMN reviewer_model VARCHAR(100)",
+            "ALTER TABLE iterations ADD COLUMN failure_reason VARCHAR(100)",
+            "ALTER TABLE iterations ADD COLUMN failure_details TEXT",
+            "ALTER TABLE iterations ADD COLUMN pm_category VARCHAR(50)",
+            "ALTER TABLE iterations ADD COLUMN pm_strategy TEXT",
+            "ALTER TABLE iterations ADD COLUMN pipeline_logs TEXT",
+            "ALTER TABLE submissions ADD COLUMN is_cancelled BOOLEAN DEFAULT 0",
+            "ALTER TABLE submissions ADD COLUMN container_id VARCHAR(64)",
         ]
         for sql in migrations:
             try:

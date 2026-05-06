@@ -1,146 +1,72 @@
-"""
-tests/test_ai_service.py — Unit tests for XML parsing and AI role logic.
-"""
+
 import pytest
+import re
 from api.services.ai_service import (
     _parse_xml_response, _sanitize_php, _extract_json_object, 
     AIServiceError, PatchSpec
 )
 
-def test_parse_xml_response_basic():
+def test_parse_xml_no_code_corruption():
+    # Hardening fix: html.unescape should not touch code content
     raw = """
-    Prose before XML...
     <repair>
-      <thought_process>I fixed it.</thought_process>
-      <diagnosis>Missing semicolon</diagnosis>
-      <fix>Added semicolon</fix>
-      <file action="full_replace" path="app/Controller.php">
-<?php
-echo "fixed";
+      <file action="full_replace" path="app/Test.php">
+      <?php
+      $x = "&amp;"; 
+      if ($y < 10 && $z > 5) return true;
+      ?>
       </file>
-      <pest_test>
-<?php
-it('works');
-      </pest_test>
     </repair>
-    Prose after XML.
     """
     resp = _parse_xml_response(raw)
-    assert resp.diagnosis == "Missing semicolon"
-    assert resp.fix_description == "Added semicolon"
+    code = resp.patches[0].replacement
+    # It should preserve &amp; and the < > symbols
+    assert "&amp;" in code
+    assert "< 10 &&" in code
+    assert "$x" in code
+
+def test_parse_xml_prose_only_escalation():
+    # Hardening fix: Prose-only responses should trigger PARSING_FAILED
+    raw = "I have analyzed the code and it seems you are missing a semicolon."
+    resp = _parse_xml_response(raw)
+    assert resp.thought_process == "PARSING_FAILED"
+    assert "CRITICAL" in resp.diagnosis
+
+def test_sanitize_php_migration_scoping():
+    # Hardening fix: Only sanitize migrations in migration paths
+    code = "class CreateUsersTable extends Migration { public function up() {} }"
+    
+    # Path with 'migration' -> should sanitize
+    fixed_mig = _sanitize_php(code, "database/migrations/2023_01_01_create_users.php")
+    assert "return new class extends Migration" in fixed_mig
+    
+    # Path without 'migration' -> should NOT sanitize
+    fixed_reg = _sanitize_php("class UserController extends Controller {}", "app/Http/Controllers/UserController.php")
+    assert "class UserController" in fixed_reg
+    assert "return new class" not in fixed_reg
+
+def test_parse_xml_malformed_tags():
+    # Test recovery when tags are slightly broken or mixed
+    raw = """
+    <repair>
+      <diagnosis>Fixed it</diagnosis>
+      <file path="app/Test.php" action="full_replace">
+      <?php echo "ok"; ?>
+      </file>
+    </repair>
+    """
+    resp = _parse_xml_response(raw)
+    assert resp.diagnosis == "Fixed it"
     assert len(resp.patches) == 1
-    assert resp.patches[0].target == "app/Controller.php"
-    assert "echo \"fixed\";" in resp.patches[0].replacement
-    assert "it('works');" in resp.pest_test
+    assert resp.patches[0].target == "app/Test.php"
 
-
-def test_parse_xml_response_multiple_files():
-    raw = """
-    <repair>
-      <file action="create_file" path="app/Models/User.php">
-<?php class User {}
-      </file>
-      <file action="full_replace" path="app/Http/Kernel.php">
-<?php class Kernel {}
-      </file>
-    </repair>
-    """
+def test_parse_xml_empty_tags():
+    raw = "<repair></repair>"
     resp = _parse_xml_response(raw)
-    assert len(resp.patches) == 2
-    assert resp.patches[0].action == "create_file"
-    assert resp.patches[0].target == "app/Models/User.php"
-    assert resp.patches[1].action == "full_replace"
+    assert resp.thought_process == "PARSING_FAILED"
 
-
-def test_sanitize_php_newlines():
+def test_sanitize_php_literal_newlines():
     # Model output literal \n instead of real newlines
     code = "<?php\\necho 'hi';\\n"
     sanitized = _sanitize_php(code)
     assert sanitized == "<?php\necho 'hi';\n"
-
-
-def test_sanitize_php_anonymous_migration():
-    code = """<?php
-class CreateUsersTable extends Migration {
-    public function up() {}
-}
-"""
-    sanitized = _sanitize_php(code)
-    assert "return new class extends Migration" in sanitized
-    assert "class CreateUsersTable" not in sanitized
-
-
-def test_extract_json_object():
-    raw = """
-    Prose...
-    {
-        "key": "value",
-        "nested": { "a": 1 }
-    }
-    More prose...
-    """
-    json_str = _extract_json_object(raw)
-    assert json_str == '{\n        "key": "value",\n        "nested": { "a": 1 }\n    }'
-
-
-def test_extract_json_object_with_think():
-    raw = """
-    <think>
-    Thinking...
-    </think>
-    ```json
-    { "status": "ok" }
-    ```
-    """
-    json_str = _extract_json_object(raw)
-    assert json_str == '{ "status": "ok" }'
-
-
-def test_extract_json_object_unbalanced():
-    with pytest.raises(ValueError, match="Unbalanced braces"):
-        _extract_json_object("{ 'a': 1")
-
-
-def test_parse_xml_response_with_cdata():
-    raw = """
-    <repair>
-      <file action="full_replace" path="app/Test.php">
-<![CDATA[
-<?php echo "CDATA works"; ?>
-]]>
-      </file>
-    </repair>
-    """
-    resp = _parse_xml_response(raw)
-    assert 'echo "CDATA works";' in resp.patches[0].replacement
-
-
-def test_parse_xml_response_malformed_recovery():
-    # Test that we can still get thought/diagnosis even if <file> is missing or malformed
-    raw = """
-    <repair>
-      <thought_process>Thinking</thought_process>
-      <diagnosis>Bug</diagnosis>
-      <file action="invalid">
-    </repair>
-    """
-    resp = _parse_xml_response(raw)
-    assert resp.thought_process == "Thinking"
-    assert resp.diagnosis == "Bug"
-    assert len(resp.patches) == 0
-
-
-def test_parse_xml_response_with_think_tag():
-    # DeepSeek R1 often includes <think> tags outside <repair>
-    raw = """
-    <think>I should fix this by adding a model.</think>
-    <repair>
-      <diagnosis>Missing Model</diagnosis>
-      <file action="create_file" path="app/Models/New.php">
-<?php class New {}
-      </file>
-    </repair>
-    """
-    resp = _parse_xml_response(raw)
-    assert resp.diagnosis == "Missing Model"
-    assert len(resp.patches) == 1

@@ -15,9 +15,10 @@ export const TestsView: React.FC = () => {
     const load = async () => {
       console.info('[LaraVibe] Loading test results...', { submissionId });
       try {
+        const sessionToken = localStorage.getItem('laravibe_session_token');
         const res = await fetch(`/api/repair/${submissionId}`, {
           headers: {
-            'Authorization': `Bearer ${MASTER_REPAIR_TOKEN}`
+            'Authorization': `Bearer ${sessionToken}`
           }
         });
         console.info('[LaraVibe] Repair API Response:', { status: res.status });
@@ -49,7 +50,7 @@ export const TestsView: React.FC = () => {
             <h1 className="text-4xl font-mono font-black text-on-surface tracking-tighter uppercase italic leading-none">
               Validation_Suite_Execution
             </h1>
-            <p className="text-on-surface-variant max-w-xl text-sm leading-relaxed font-sans opacity-70">
+            <p className="text-on-surface-variant max-w-xl text-sm leading-relaxed font-mono opacity-70">
               Running high-fidelity Pest 3 tests against synthesized patches. Each assertion is verified within an isolated sandbox kernel.
             </p>
           </div>

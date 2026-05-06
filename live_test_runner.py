@@ -21,6 +21,9 @@ import sys
 import os
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 BASE_URL   = "http://127.0.0.1:8000"
 TOKEN      = os.environ.get("MASTER_REPAIR_TOKEN", "change-me-in-production")
 DATASET_DIR = "dataset"
@@ -37,7 +40,14 @@ def load_code(case: str) -> str:
         return f.read()
 
 
-async def submit_repair(client: httpx.AsyncClient, case: str, code: str) -> str:
+async def get_session_token(client: httpx.AsyncClient) -> str:
+    resp = await client.post(f"{BASE_URL}/api/auth/login", json={"token": TOKEN})
+    if resp.status_code != 200:
+        raise RuntimeError(f"Login failed: {resp.text}")
+    return resp.json()["access_token"]
+
+
+async def submit_repair(client: httpx.AsyncClient, case: str, code: str, jwt_token: str) -> str:
     """POST /api/repair — returns submission_id."""
     payload = {
         "code": code,
@@ -49,7 +59,7 @@ async def submit_repair(client: httpx.AsyncClient, case: str, code: str) -> str:
     resp = await client.post(
         f"{BASE_URL}/api/repair",
         json=payload,
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {jwt_token}"},
         timeout=30,
     )
     if resp.status_code != 202:
@@ -57,12 +67,12 @@ async def submit_repair(client: httpx.AsyncClient, case: str, code: str) -> str:
     return resp.json()["submission_id"]
 
 
-async def stream_events(sub_id: str, case: str) -> dict:
+async def stream_events(sub_id: str, case: str, jwt_token: str) -> dict:
     """
     Consume the SSE stream at /api/repair/{id}/stream?token=...
     Returns a summary dict when the 'complete' event arrives.
     """
-    url = f"{BASE_URL}/api/repair/{sub_id}/stream?token={TOKEN}"
+    url = f"{BASE_URL}/api/repair/{sub_id}/stream?token={jwt_token}"
     summary = {
         "case": case,
         "submission_id": sub_id,
@@ -109,8 +119,8 @@ async def stream_events(sub_id: str, case: str) -> dict:
                     print(f"    > {data.get('msg', '')}")
 
                 elif event == "ai_thinking" and "diagnosis" in data:
-                    diag = data.get("diagnosis", "")[:90]
-                    fix  = data.get("fix_description", "")[:90]
+                    diag = (data.get("diagnosis") or "")[:90]
+                    fix  = (data.get("fix_description") or "")[:90]
                     print(f"    \U0001f9e0 AI diag : {diag}")
                     print(f"    \U0001f9e0 AI fix  : {fix}")
 
@@ -160,7 +170,8 @@ async def run_case(case: str) -> dict:
 
     async with httpx.AsyncClient(timeout=30) as client:
         try:
-            sub_id = await submit_repair(client, case, code)
+            jwt_token = await get_session_token(client)
+            sub_id = await submit_repair(client, case, code, jwt_token)
         except Exception as exc:
             print(f"  \U0001f6a8 Submit failed: {exc}")
             return {"case": case, "status": "crashed", "errors": [str(exc)]}
@@ -168,8 +179,10 @@ async def run_case(case: str) -> dict:
     print(f"  Submission ID: {sub_id}\n")
 
     try:
-        result = await stream_events(sub_id, case)
+        result = await stream_events(sub_id, case, jwt_token)
     except Exception as exc:
+        import traceback
+        traceback.print_exc()
         print(f"  \U0001f6a8 Stream failed: {exc}")
         return {"case": case, "status": "stream_error", "errors": [str(exc)]}
 

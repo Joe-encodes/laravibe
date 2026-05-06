@@ -13,9 +13,9 @@ This document provides a low-level technical specification of the LaraVibe (Lara
 | **Async Engine** | `asyncio` | All Docker exec, AI calls, and DB writes are non-blocking |
 | **ORM** | SQLAlchemy 2.0 + `aiosqlite` | Async SQLite; `create_tables()` called at lifespan startup |
 | **Validation** | Pydantic v2 | Request/response schemas in `schemas.py`; env settings via `pydantic-settings` in `config.py` |
-| **Sandbox** | Docker Python SDK | `docker_service.py` wraps all container lifecycle calls in `asyncio.run_in_executor()` |
-| **AI Routing** | Custom multi-provider dispatcher | `ROTATION_CHAIN` (batch) + `FALLBACK_CHAIN` (single) — no LiteLLM proxy |
-| **Reliability** | `tenacity` | 3 retries on `ValueError`/`JSONDecodeError`; 3 retries on network/rate-limit errors with exponential backoff (max 10 s) |
+| **Sandbox** | Docker Python SDK | `api/services/sandbox/` package manages lifecycle, filesystem, and testing |
+| **AI Routing** | Custom multi-provider dispatcher | `PLANNER_POOL`, `EXECUTOR_POOL`, etc. — with automated fallback & 429 retry |
+| **Reliability** | `tenacity` + Custom Backoff | 3 retries on parse errors; Smart sleep/retry on 429 Rate Limits |
 | **Rate Limiting** | `slowapi` | Applied at router level; `RateLimitExceeded` handler registered on the app |
 | **Logging** | Python `logging` + `RotatingFileHandler` | Console + `data/logs/repair_platform.log` (10 MB × 5 backups) |
 
@@ -31,9 +31,10 @@ Every repair request follows a non-blocking, asynchronous lifecycle:
    - Spawns a **FastAPI `BackgroundTask`** to run the orchestration loop.
    - Returns `202 Accepted` with `submission_id` immediately.
 
-2. **Streaming (`GET /api/repair/{id}/stream`)**
+3. **Streaming & Forensic Playback (`GET /api/repair/{id}/stream`)**
    - Client connects via **Server-Sent Events (SSE)**.
-   - `repair_service.run_repair_loop()` is an `AsyncGenerator` that yields JSON event dicts.
+   - If the repair is **finished**, the router reconstructs the stream from the stored `pipeline_logs` in the database, ensuring 100% observability of completed tasks.
+   - If the repair is **active**, `repair_service.run_repair_loop()` yields real-time JSON events.
    - The SSE router consumes the generator and formats each dict as a `data: {...}` line.
 
 3. **Process Completion**
@@ -108,25 +109,17 @@ security_opt=["no-new-privileges:true"]      # Privilege escalation blocked
 
 ---
 
-### B. `sandbox_service.py` — Laravel Interaction Helpers
+### B. `api/services/sandbox/` — Laravel Interaction Helpers
 
-Extracted from `repair_service.py` to keep the orchestrator lean. Each function does exactly one thing inside the running container.
+The sandbox service has been modularized into a package to keep the orchestrator lean.
 
-| Function | What It Does |
+| Module | Responsibilities |
 |---|---|
-| `detect_class_info(container)` | Parses namespace + classname from `code.php` via PHP one-liners; builds `ClassInfo` (FQCN, PSR-4 dest path, route resource name) |
-| `setup_sqlite(container)` | Switches the sandbox to SQLite (needed because `--network=none` blocks MySQL); runs `php artisan migrate --force` |
-| `place_code_in_laravel(container, class_info)` | Copies code to the correct PSR-4 path, runs `composer dump-autoload`, validates via Tinker; normalises exit code by `CLASS_OK` sentinel |
-| `scaffold_route(container, class_info)` | Appends `Route::apiResource()` to `routes/api.php` idempotently — runs **before** Boost so `route:list` sees the new route |
-| `run_pest_test(container)` | Runs `./vendor/bin/pest --filter=RepairTest --no-coverage` |
-| `capture_laravel_log(container)` | Reads last 40 lines of `storage/logs/laravel.log` — surfaces the real PHP exception behind a Pest failure |
-| `run_mutation_test(container)` | Runs `./vendor/bin/pest --mutate`; parses score; classifies output into: `covers_missing` (score=0, fail), `dependency_failure` (score=0, fail), `infra_failure` (soft-pass), or real score |
-| `parse_mutation_score(output)` | 6-pattern regex suite with ANSI stripping; returns `0.0` if no pattern matches |
-| `lint_test_file(container)` | Runs `php -l` on `RepairTest.php` before the mutation gate — catches AI-generated syntax errors early |
-| `generate_baseline_pest_test(class_info)` | Generates a system-controlled HTTP assertion test (`getJson('/api/{resource}')->assertSuccessful()`) |
-| `inject_pest_test(container, code)` | Writes the Pest test to `tests/Feature/RepairTest.php` |
-| `ensure_covers_directive(pest_test, code, fqcn)` | Injects missing `use function Pest\Laravel\{...};` imports and a `covers(ClassName::class);` directive for mutation gate validity |
-| `reinject_files(container, files)` | Re-injects supplementary files (models, migrations) created in earlier iterations into the current container |
+| `manager.py` | Creating and destroying containers; shared state management |
+| `docker.py` | Low-level Docker SDK calls (exec, copy, ping) |
+| `laravel.py` | Detect class info, setup SQLite, PSR-4 placement, route scaffolding |
+| `testing.py` | run_pest_test, run_mutation_test, capture_laravel_log, run_phpstan |
+| `filesystem.py` | write_file, read_file, lint_php, prepare_pest_test |
 
 ---
 
@@ -159,15 +152,29 @@ A specialized reflection service that scans code for `use` statements and extrac
 **Model Chains:**
 
 ```python
-**Model Pools:**
-
 ```python
 # Each pool = [(provider, model), ...] ordered by preference.
-PLANNER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
-VERIFIER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
-POST_MORTEM_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
-EXECUTOR_POOL = [("nvidia", "meta/llama-3.3-70b-instruct"), ("nvidia", "Qwen/Qwen2.5-Coder-32B-Instruct")]
-REVIEWER_POOL = [("gemini", "gemini-2.0-flash"), ("groq", "llama-3.3-70b-versatile")]
+# 429 errors trigger a "Retry-After" sleep and failover to the next item.
+
+PLANNER_POOL = [
+    ("groq", "llama-3.3-70b-versatile"),
+    ("cerebras", "llama-3.3-70b"),
+    ("dashscope", "qwen3-max"),
+    ("nvidia", "meta/llama-3.3-70b-instruct")
+]
+
+EXECUTOR_POOL = [
+    ("nvidia", "meta/llama-3.3-70b-instruct"),
+    ("groq", "llama-3.3-70b-versatile"),
+    ("cerebras", "llama-3.3-70b"),
+    ("dashscope", "qwen3-max")
+]
+
+POST_MORTEM_POOL = [
+    ("groq", "llama-3.3-70b-versatile"),
+    ("cerebras", "llama-3.3-70b"),
+    ("dashscope", "qwen3-max")
+]
 ```
 ```
 
@@ -292,6 +299,8 @@ The core logic has been modularized into `api/services/repair/`:
 
 **`TEST_DEPENDENCY_ERROR` tagging:** If the Pest failure output contains `not found`, `doesn't exist`, `ReflectionException`, or `Call to undefined method`, the error is prefixed with `TEST_DEPENDENCY_ERROR:`. This keyword instructs the AI to use `create_file` rather than a `full_replace`.
 
+**Fast-Refine Loop Protection:** If the system detects that a strategy or diagnosis is being repeated in `Fast-Refine Mode`, it automatically forces a fallback to the full **Planner/Verifier** cycle for the next iteration to break the loop.
+
 ---
 
 ## 5. The Iterative Loop — State Machine
@@ -346,7 +355,12 @@ All endpoints requiring auth use `Authorization: Bearer <X-Repair-Token>` from `
 ### `GET /api/repair/{id}/stream`
 - **Protocol**: Server-Sent Events (SSE)
 - **Event types**: `submission_start`, `iteration_start`, `log_line`, `boost_queried`, `ai_thinking`, `pest_result`, `mutation_result`, `patch_applied`, `error`, `complete`
+- **Forensic Mode**: Automatically detects finished repairs and replays historical logs from DB.
 - **FE note**: `log_line` events with 🔄 indicate provider fallback in progress. Do NOT close the `EventSource` on seeing these — the loop continues.
+
+### `DELETE /api/repair/{id}`
+- **Administrative Kill Switch**: Performs an immediate `docker rm -f` on the associated sandbox and marks the submission as `cancelled`.
+- **Cleanup**: Triggers orchestrator loop termination and event queue flushing.
 
 ### `GET /api/repair/{id}`
 - Returns `SubmissionOut` with full nested `iterations` array including all stored fields.

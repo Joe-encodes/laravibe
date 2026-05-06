@@ -48,6 +48,7 @@ class IterationOut(BaseModel):
     pest_test_result: Optional[str] = None
     mutation_score: Optional[float] = None
     duration_ms: Optional[int] = None
+    pipeline_logs: Optional[str] = None
     created_at: datetime
     model_config = {"from_attributes": True}
 
@@ -60,6 +61,8 @@ class SubmissionOut(BaseModel):
     original_code: str
     final_code: Optional[str] = None
     error_summary: Optional[str] = None
+    is_cancelled: bool = False
+    container_id: Optional[str] = None
     case_id: Optional[str] = None
     category: Optional[str] = None
     experiment_id: Optional[str] = None
@@ -84,7 +87,6 @@ class HealthResponse(BaseModel):
     docker: str = "unknown"
     ai: str = "unknown"
     db: str = "unknown"
-    redis_broker: str = "unknown"
 
 
 class EvaluateCaseResult(BaseModel):

@@ -45,6 +45,18 @@ export interface EvaluationExperiment {
   created_at: string;
 }
 
+export interface BoostContext {
+  component_type: string;
+  context_text: string;
+  schema?: any;
+}
+
+export interface Patch {
+  path: string;
+  action: 'full_replace' | 'create_file';
+  content: string;
+}
+
 export interface DiagnosticInsight {
   title: string;
   description: string;

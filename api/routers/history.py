@@ -18,14 +18,16 @@ router = APIRouter(prefix="/api", tags=["history"])
 
 @router.get("/history", response_model=list[HistoryItem])
 async def get_history(
+    skip: int = 0,
     limit: int = 20,
     db: AsyncSession = Depends(get_db),
     _user: dict = Depends(get_current_user),
 ):
-    """Return the last `limit` submissions (default 20), newest first."""
+    """Return the last `limit` submissions, newest first, offset by `skip`."""
     result = await db.execute(
         select(Submission)
         .order_by(desc(Submission.created_at))
+        .offset(skip)
         .limit(limit)
     )
     return result.scalars().all()

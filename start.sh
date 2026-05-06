@@ -71,4 +71,4 @@ echo ""
 mkdir -p data
 
 # Start server
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn api.main:app --reload --reload-exclude "data/*" --reload-exclude "logs/*" --host 0.0.0.0 --port 8000

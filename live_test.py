@@ -4,7 +4,7 @@ import json
 import time
 
 BASE_URL = "http://127.0.0.1:8000"
-TOKEN = "laravibe-repair-2026-safe-token"
+TOKEN = "-repair-2026-safelaravibe-token"
 
 code = """<?php
 namespace App\Http\Controllers;

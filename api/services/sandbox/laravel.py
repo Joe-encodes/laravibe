@@ -21,12 +21,12 @@ class ClassInfo:
     route_resource: str
 
 async def detect_class_info(container) -> ClassInfo:
-    """Detect namespace and classname from /submitted/code.php."""
+    """Detect namespace and classname from /var/www/sandbox/submitted_code.php."""
     # Pre-lint to ensure valid detection
-    await docker.execute(container, "php -l /submitted/code.php", timeout=5)
+    await docker.execute(container, "php -l /var/www/sandbox/submitted_code.php", timeout=5)
 
-    ns_cmd = "php -r '$c=@file_get_contents(\"/submitted/code.php\"); if(preg_match(\"/namespace\\s+([^;\\s]+)/\",$c,$m)) echo trim($m[1]);'"
-    cls_cmd = "php -r '$c=@file_get_contents(\"/submitted/code.php\"); if(preg_match(\"/class\\s+(\\w+)/\",$c,$m)) echo $m[1];'"
+    ns_cmd = "php -r '$c=@file_get_contents(\"/var/www/sandbox/submitted_code.php\"); if(preg_match(\"/namespace\\s+([^;\\s]+)/\",$c,$m)) echo trim($m[1]);'"
+    cls_cmd = "php -r '$c=@file_get_contents(\"/var/www/sandbox/submitted_code.php\"); if(preg_match(\"/class\\s+(\\w+)/\",$c,$m)) echo $m[1];'"
     
     ns_res = await docker.execute(container, ns_cmd, timeout=5)
     cls_res = await docker.execute(container, cls_cmd, timeout=5)
@@ -87,7 +87,7 @@ async def place_code_in_laravel(container, info: ClassInfo) -> bool:
     
     cmd = (
         f"mkdir -p {dest_dir} && "
-        f"cp /submitted/code.php {shlex.quote(info.dest_file)} && "
+        f"cp /var/www/sandbox/submitted_code.php {shlex.quote(info.dest_file)} && "
         f"cd /var/www/sandbox && php artisan optimize:clear >/dev/null && "
         f"if [ ! -f /tmp/autoload_done ]; then composer dump-autoload -q && touch /tmp/autoload_done; fi && "
         f"php artisan tinker --execute=\"$(echo {b64_tinker} | base64 -d)\""
@@ -102,13 +102,31 @@ async def scaffold_route(container, info: ClassInfo) -> None:
     await docker.execute(container, "php /tmp/scaffold.php && php /var/www/sandbox/artisan route:clear", timeout=10)
 
 async def execute_code(container, code: str) -> dict:
-    """Write and execute the provided PHP code in the sandbox using Tinker."""
+    """Write and execute the provided PHP code in the sandbox using Tinker.
+    
+    NOTE: /var/www/sandbox/submitted_code.php is only written here for error detection *before*
+    place_code_in_laravel has run.  Once the class is placed in its PSR-4 path
+    (app/Http/Controllers/…) and autoloaded, we must NOT require() it again or
+    PHP will fatal with "Cannot declare class X, already in use".  The guard
+    below uses class_exists() with autoload=true to skip the require when the
+    class is already available, which is the case on every iteration after the
+    first patch is applied.
+    """
     await docker.copy_code(container, code)
     
-    # Use Tinker to execute the code so it's bootstrapped in the Laravel environment
-    # We wrap it in a try-catch to get clean error output
+    # Detect the class name from the code so we can guard the require.
+    # Falls back to requiring unconditionally when the class cannot be detected.
     tinker_code = (
-        "try { require '/submitted/code.php'; } "
+        "try { "
+        "$code = file_get_contents('/var/www/sandbox/submitted_code.php'); "
+        "preg_match('/class\\s+(\\w+)/', $code, $m); "
+        "$cls = $m[1] ?? ''; "
+        "if ($cls && class_exists($cls, true)) { "
+        "  echo '[ALREADY_LOADED:' . $cls . ']'; "
+        "} else { "
+        "  require '/var/www/sandbox/submitted_code.php'; "
+        "} "
+        "} "
         "catch (Throwable $e) { echo $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine() . \"\\n\" . $e->getTraceAsString(); exit(1); }"
     )
     b64_code = base64.b64encode(tinker_code.encode()).decode()
@@ -120,7 +138,7 @@ async def execute_code(container, code: str) -> dict:
     )
     
     return {
-        "output": res.stdout, 
-        "error": res.stderr if res.exit_code != 0 else (res.stdout if res.exit_code != 0 else None), 
+        "output": res.stdout,
+        "error": res.stderr or res.stdout if res.exit_code != 0 else None,
         "exit_code": res.exit_code
     }

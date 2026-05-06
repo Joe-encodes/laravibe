@@ -114,26 +114,57 @@ async def create_container() -> docker.models.containers.Container:
 
 
 async def copy_code(container, code: str) -> None:
-    """Write `code` to /submitted/code.php inside the running container."""
-    await copy_file(container, "/submitted/code.php", code)
+    """Write `code` to /var/www/sandbox/submitted_code.php inside the running container."""
+    await copy_file(container, "submitted_code.php", code)
+
+
+# ── SECURITY BOUNDARIES ──────────────────────────────────────────────────────
+FORBIDDEN_PATHS = [
+    "/etc", "/usr", "/bin", "/sbin", "/lib", "/root", "/boot", "/dev", "/proc", "/sys"
+]
+FORBIDDEN_FILES = [
+    ".env", "artisan", "composer.json", "composer.lock", "artisan", "phpunit.xml", "pest.php"
+]
+SANDBOX_ROOT = "/var/www/sandbox"
 
 
 async def copy_file(container, dest_path: str, content: str) -> None:
-    """Write `content` to `dest_path` inside the running container."""
+    """
+    Write `content` to `dest_path` inside the running container.
+    Hardened with path normalization and forbidden file checks.
+    """
     def _copy():
-        import pathlib
         import posixpath
         content_bytes = content.encode("utf-8")
 
-        # If path is relative, it's relative to the Laravel root
-        if not posixpath.isabs(dest_path):
-            abs_dest_path = posixpath.join("/var/www/sandbox", dest_path)
-        else:
-            abs_dest_path = dest_path
+        # 1. Path Normalization (Prevent Directory Traversal)
+        clean_path = posixpath.normpath(dest_path)
+        
+        # 2. Forbidden Path/File Check (Check ORIGINAL intended path)
+        # If they tried to use an absolute path to a system area, block it
+        for forbidden in FORBIDDEN_PATHS:
+            if clean_path.startswith(forbidden):
+                raise PermissionError(f"Security Block: Access to system path '{forbidden}' is prohibited.")
 
-        # Use posixpath for container-side dir (container is always Linux)
+        # Re-build absolute path strictly inside SANDBOX_ROOT
+        # Strip leading slashes to make it relative for joining
+        rel_path = clean_path.lstrip("/")
+        
+        # WE MUST NORMALIZE AFTER JOINING to resolve any ../../ attacks
+        abs_dest_path = posixpath.normpath(posixpath.join(SANDBOX_ROOT, rel_path))
+        
+        # 3. Forbidden File Check (Check final filename)
+        filename = posixpath.basename(abs_dest_path)
         dest_dir = posixpath.dirname(abs_dest_path)
-        filename = pathlib.PurePosixPath(abs_dest_path).name
+        
+        if filename in FORBIDDEN_FILES:
+            raise PermissionError(f"Security Block: Writing to forbidden file '{filename}' is prohibited.")
+
+        # Final safety check: ensure it didn't somehow escape SANDBOX_ROOT
+        # Because we normalized above, /var/www/sandbox/../../etc becomes /etc
+        # and therefore fails this strict startswith check.
+        if not abs_dest_path.startswith(SANDBOX_ROOT):
+            raise PermissionError(f"Security Block: Path traversal detected for '{dest_path}'")
 
         # Step 1: Ensure the directory exists BEFORE put_archive.
         # Check the exit code — if this fails, put_archive will 404.
@@ -219,10 +250,19 @@ async def execute(
                 exit_code=137, # Standard Docker exit code for SIGKILL/Death
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
+    except NotFound:
+        duration_ms = int((time.monotonic() - start) * 1000)
+        logger.warning(f"[{container.id[:12]}] Container not found during execution (likely killed/cancelled).")
+        return ExecResult(
+            stdout="",
+            stderr="[CANCELLED] The container was destroyed during execution.",
+            exit_code=404,  # Specific code for "Not Found"
+            duration_ms=duration_ms,
+        )
     except Exception as exc:
         duration_ms = int((time.monotonic() - start) * 1000)
         err_msg = f"Docker engine error: {exc}"
-        logger.error(f"[{container.short_id}] {err_msg} (after {duration_ms}ms)")
+        logger.error(f"[{container.id[:12]}] {err_msg} (after {duration_ms}ms)")
         return ExecResult(
             stdout="",
             stderr=f"[SYSTEM_ERROR] {err_msg}",

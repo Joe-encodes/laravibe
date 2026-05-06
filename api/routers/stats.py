@@ -3,10 +3,11 @@ api/routers/stats.py — Specialized endpoints for research analytics and effici
 """
 import csv
 import io
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, case
 from sqlalchemy.orm import selectinload
@@ -15,6 +16,7 @@ from api.database import get_db
 from api.models import Submission, Iteration
 from api.services.auth_service import get_current_user
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
 
@@ -27,32 +29,36 @@ async def get_stats_summary(
     Returns high-level research metrics grouped by category.
     Includes success rates and average iterations per error type.
     """
-    status_counts = await db.execute(
-        select(Submission.status, func.count(Submission.id))
-        .group_by(Submission.status)
-    )
-    status_map = {row[0]: row[1] for row in status_counts.all()}
-
-    category_metrics = await db.execute(
-        select(
-            Submission.category,
-            func.count(Submission.id).label("count"),
-            func.avg(case((Submission.status == 'success', 1.0), else_=0.0)).label("success_rate"),
-            func.avg(Submission.total_iterations).label("avg_iterations")
+    try:
+        status_counts = await db.execute(
+            select(Submission.status, func.count(Submission.id))
+            .group_by(Submission.status)
         )
-        .where(Submission.category.isnot(None))
-        .group_by(Submission.category)
-    )
+        status_map = {row[0]: row[1] for row in status_counts.all()}
 
-    categories = [
-        {
-            "name": row[0], "count": row[1],
-            "success_rate": round(row[2] * 100, 1),
-            "avg_iterations": round(row[3], 2),
-        }
-        for row in category_metrics.all()
-    ]
-    return {"overall": status_map, "categories": categories, "total": sum(status_map.values())}
+        category_metrics = await db.execute(
+            select(
+                Submission.category,
+                func.count(Submission.id).label("count"),
+                func.avg(case((Submission.status == 'success', 1.0), else_=0.0)).label("success_rate"),
+                func.avg(Submission.total_iterations).label("avg_iterations")
+            )
+            .where(Submission.category.isnot(None))
+            .group_by(Submission.category)
+        )
+
+        categories = [
+            {
+                "name": row[0], "count": row[1],
+                "success_rate": round((row[2] or 0.0) * 100, 1),
+                "avg_iterations": round(row[3] or 0.0, 2),
+            }
+            for row in category_metrics.all()
+        ]
+        return {"overall": status_map, "categories": categories, "total": sum(status_map.values())}
+    except Exception as exc:
+        logger.error(f"[Stats] summary query failed: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve stats summary.")
 
 
 async def _query_summary(db: AsyncSession) -> dict:
@@ -150,55 +156,58 @@ async def get_unified_stats(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """Unified endpoint for the frontend dashboard."""
-    # Execute the summary query directly on this session — do NOT call the
-    # route handler function above, as that would violate DI contract.
-    status_counts = await db.execute(
-        select(Submission.status, func.count(Submission.id))
-        .group_by(Submission.status)
-    )
-    status_map = {row[0]: row[1] for row in status_counts.all()}
-
-    category_metrics = await db.execute(
-        select(
-            Submission.category,
-            func.count(Submission.id).label("count"),
-            func.avg(case((Submission.status == 'success', 1.0), else_=0.0)).label("success_rate"),
-            func.avg(Submission.total_iterations).label("avg_iterations")
+    """Unified endpoint for the frontend dashboard. Safe on empty DB."""
+    try:
+        status_counts = await db.execute(
+            select(Submission.status, func.count(Submission.id))
+            .group_by(Submission.status)
         )
-        .where(Submission.category.isnot(None))
-        .group_by(Submission.category)
-    )
-    categories = [
-        {
-            "name": row[0], "count": row[1],
-            "success_rate": round(row[2] * 100, 1),
-            "avg_iterations": round(row[3], 2),
+        status_map = {row[0]: row[1] for row in status_counts.all()}
+
+        category_metrics = await db.execute(
+            select(
+                Submission.category,
+                func.count(Submission.id).label("count"),
+                func.avg(case((Submission.status == 'success', 1.0), else_=0.0)).label("success_rate"),
+                func.avg(Submission.total_iterations).label("avg_iterations")
+            )
+            .where(Submission.category.isnot(None))
+            .group_by(Submission.category)
+        )
+        categories = [
+            {
+                "name": row[0], "count": row[1],
+                "success_rate": round((row[2] or 0.0) * 100, 1),
+                "avg_iterations": round(row[3] or 0.0, 2),
+            }
+            for row in category_metrics.all()
+        ]
+
+        avg_metrics = await db.execute(
+            select(
+                func.avg(Submission.total_iterations),
+                func.avg(Iteration.mutation_score)
+            )
+            .join(Iteration, Submission.id == Iteration.submission_id)
+            .where(Submission.status == 'success')
+        )
+        # .first() returns None when there are no successful submissions yet
+        avg_row = avg_metrics.first()
+        avg_iterations    = float(avg_row[0] or 0.0) if avg_row and avg_row[0] is not None else 0.0
+        avg_mutation_score = float(avg_row[1] or 0.0) if avg_row and avg_row[1] is not None else 0.0
+
+        total = sum(status_map.values())
+        success_count = status_map.get("success", 0)
+        global_success_rate = (success_count / total * 100) if total > 0 else 0.0
+
+        return {
+            "global_success_rate": round(global_success_rate, 1),
+            "avg_iterations": round(avg_iterations, 2),
+            "avg_mutation_score": round(avg_mutation_score, 1),
+            "total_repairs": total,
+            "categories": categories,
+            "status_distribution": status_map,
         }
-        for row in category_metrics.all()
-    ]
-
-    avg_metrics = await db.execute(
-        select(
-            func.avg(Submission.total_iterations),
-            func.avg(Iteration.mutation_score)
-        )
-        .join(Iteration, Submission.id == Iteration.submission_id)
-        .where(Submission.status == 'success')
-    )
-    avg_row = avg_metrics.first()
-    avg_iterations = float(avg_row[0] or 0) if avg_row else 0.0
-    avg_mutation_score = float(avg_row[1] or 0) if avg_row else 0.0
-
-    total = sum(status_map.values())
-    success_count = status_map.get("success", 0)
-    global_success_rate = (success_count / total * 100) if total > 0 else 0.0
-
-    return {
-        "global_success_rate": round(global_success_rate, 1),
-        "avg_iterations": round(avg_iterations, 2),
-        "avg_mutation_score": round(avg_mutation_score, 1),
-        "total_repairs": total,
-        "categories": categories,
-        "status_distribution": status_map,
-    }
+    except Exception as exc:
+        logger.error(f"[Stats] unified stats query failed: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to retrieve unified stats.")

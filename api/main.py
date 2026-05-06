@@ -6,10 +6,13 @@ Start with:
 """
 import logging
 import sys
+import traceback
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from api.limiter import limiter
@@ -17,6 +20,7 @@ from api.limiter import limiter
 from api.config import get_settings
 from api.database import create_tables
 from api.routers.health import router as health_router
+from api.routers.auth import router as auth_router
 from api.routers.repair import router as repair_router
 from api.routers.history import router as history_router
 from api.routers.evaluate import router as evaluate_router
@@ -58,17 +62,41 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.allowed_origins,
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_credentials=True,
 )
 
 app.include_router(health_router)
+app.include_router(auth_router)
 app.include_router(repair_router)
 app.include_router(history_router)
 app.include_router(evaluate_router)
 app.include_router(stats_router)
 app.include_router(admin_router)
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all handler: prevents raw Python tracebacks reaching the client.
+    Logs the full traceback internally, returns a clean JSON 500 with a
+    correlation error_id so the log can be traced.
+    """
+    error_id = str(uuid.uuid4())[:8]
+    logger.error(
+        f"[500] Unhandled exception on {request.method} {request.url.path} "
+        f"[error_id={error_id}]: {exc}\n{traceback.format_exc()}"
+    )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": "An internal server error occurred. The engineering team has been notified.",
+            "error_id": error_id,
+            "path": str(request.url.path),
+        },
+    )
 
 
 @app.get("/", include_in_schema=False)

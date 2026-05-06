@@ -7,7 +7,7 @@ Two tables:
 """
 import uuid
 from datetime import datetime, timezone
-from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey, Index
+from sqlalchemy import String, Integer, Float, Text, DateTime, ForeignKey, Index, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.database import Base
@@ -38,6 +38,8 @@ class Submission(Base):
     total_iterations: Mapped[int] = mapped_column(Integer, default=0)
     final_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    container_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # Research Metadata
     case_id: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
@@ -74,6 +76,12 @@ class Iteration(Base):
     mutation_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Failure tracking for better feedback loop
+    failure_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)  # "pest_failed" | "mutation_failed" | "patch_failed" | "test_syntax_error"
+    failure_details: Mapped[str | None] = mapped_column(Text, nullable=True)  # Structured info about why it failed
+    pm_category: Mapped[str | None] = mapped_column(String(50), nullable=True)  # Post-mortem category from critic: "syntax" | "logic" | "dependency" | "database" | "test"
+    pm_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)  # Post-mortem fix strategy
+    pipeline_logs: Mapped[str | None] = mapped_column(Text, nullable=True)  # JSON list of all SSE events for this iteration
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_now)
 
     submission: Mapped["Submission"] = relationship("Submission", back_populates="iterations")

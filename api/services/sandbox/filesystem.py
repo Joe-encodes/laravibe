@@ -25,7 +25,7 @@ async def read_file(container, path: str) -> str:
 async def lint_php(container, path: str) -> tuple[bool, str]:
     """Check PHP syntax for a specific file."""
     res = await docker.execute(container, f"php -l {path}", timeout=5)
-    return res.exit_code == 0, res.stdout
+    return res.exit_code == 0, res.stderr or res.stdout
 
 def prepare_pest_test(test_code: str, target_fqcn: str) -> str:
     """Inject required imports and covers() directive into a Pest test."""
