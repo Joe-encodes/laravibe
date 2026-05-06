@@ -1,5 +1,6 @@
 """
-api/database.py — Async SQLAlchemy setup with aiosqlite.
+api/database.py — Async SQLAlchemy setup.
+Supports both SQLite (local) and PostgreSQL (production).
 Creates tables on startup. Use get_db() as FastAPI dependency.
 """
 from pathlib import Path

@@ -12,7 +12,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import os
+
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from api.limiter import limiter
@@ -76,6 +79,27 @@ app.include_router(evaluate_router)
 app.include_router(stats_router)
 app.include_router(admin_router)
 
+# ── Static Files (Frontend) ──────────────────────────────────────────────────
+# In production, we serve the compiled React app from the /static folder.
+if os.path.exists("static"):
+    app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_frontend(full_path: str):
+    """
+    Serve index.html for all non-API routes (SPA support).
+    If a file exists in /static, the mount point above handles it.
+    Otherwise, we fall back to index.html for React routing.
+    """
+    if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc"):
+        return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        
+    index_path = os.path.join("static", "index.html")
+    if os.path.exists(index_path):
+        return FileResponse(index_path)
+        
+    return {"message": "Laravel AI Repair Platform — API is running. UI not found."}
+
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -97,8 +121,3 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
             "path": str(request.url.path),
         },
     )
-
-
-@app.get("/", include_in_schema=False)
-async def root():
-    return {"message": "Laravel AI Repair Platform — see /docs"}
