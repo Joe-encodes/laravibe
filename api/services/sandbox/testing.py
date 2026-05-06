@@ -47,14 +47,21 @@ async def run_mutation_test(container) -> MutationResult:
         logger.warning("Mutation test soft-passed due to infrastructure/missing plugin.")
         return MutationResult(100.0, True, output, soft_pass=True)
     
-    score = 0.0
     try:
-        start_idx = output.find('{')
-        if start_idx != -1:
-            data = json.loads(output[start_idx:])
+        # Find the last valid JSON object in the output (Pest may output multiple lines/blocks)
+        matches = list(re.finditer(r'\{.*\}', output, re.DOTALL))
+        if matches:
+            last_match = matches[-1].group(0)
+            data = json.loads(last_match)
             score = float(data.get("msi", 0.0))
         else:
-            raise ValueError("No JSON object found in output")
+            # Fallback to simple find
+            start_idx = output.find('{')
+            if start_idx != -1:
+                data = json.loads(output[start_idx:])
+                score = float(data.get("msi", 0.0))
+            else:
+                raise ValueError("No JSON object found in output")
     except Exception as e:
         logger.warning(f"Could not parse mutation score JSON. Treating as 0.0%. Error: {e}. Output tail: {output[-200:]}")
             

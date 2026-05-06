@@ -46,7 +46,7 @@ def setup_logging(debug: bool = False):
     formatter = ContextFormatter(log_format)
 
     # 2. Handlers
-    # Console handler
+    # Console handler (outputs to stdout)
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -64,21 +64,13 @@ def setup_logging(debug: bool = False):
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG if debug else logging.INFO)
     
-    # Clear existing handlers to prevent duplicates during reloads
+    # Clear existing handlers to prevent duplicates
     root_logger.handlers = []
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
 
-    # 4. Redirect specific loggers
-    # Silence some noisy 3rd party loggers
-    logging.getLogger("docker").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-
-    # Ensure Uvicorn logs go through our root logger handlers
-    for logger_name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logging_logger = logging.getLogger(logger_name)
-        logging_logger.handlers = []
-        logging_logger.propagate = True
-
-    logging.info(f"Logging initialized. File: {log_file}")
+    # Note: In cloud environments (Koyeb/Heroku), the console_handler (stdout)
+    # is the primary way to view logs in the web dashboard.
+    logging.info(f"Logging initialized in {'DEBUG' if debug else 'INFO'} mode.")
+    if debug:
+        logging.info(f"File logging: {log_file}")
