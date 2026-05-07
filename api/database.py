@@ -108,7 +108,9 @@ async def get_db():
     async with get_sessionmaker()() as session:
         try:
             yield session
-            await session.commit()
+            # Only commit if there are actual changes to persist
+            if session.new or session.deleted or session.dirty:
+                await session.commit()
         except Exception:
             await session.rollback()
             raise
