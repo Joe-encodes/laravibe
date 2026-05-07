@@ -6,7 +6,6 @@
 # set +e # Disable exit on error so we can at least launch Gunicorn if Docker fails
 
 # 1. Environment Checks
-set -x # EXTREME VERBOSE TRACING
 export REPAIR_ENV="production"
 PORT="${PORT:-8000}"
 
