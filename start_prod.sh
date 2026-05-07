@@ -18,7 +18,8 @@ mkdir -p data logs
 # 3. Docker Daemon Startup (DinD)
 echo ">>> Starting Docker daemon..."
 # We use vfs driver because overlay2 often fails in nested containers on cloud hosts
-dockerd --storage-driver=vfs > /dev/null 2>&1 &
+# We log output to logs/docker.log to help debug startup failures
+dockerd --storage-driver=vfs > logs/docker.log 2>&1 &
 
 # Wait for Docker to be ready
 echo ">>> Waiting for Docker to wake up..."
