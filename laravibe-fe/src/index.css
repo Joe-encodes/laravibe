@@ -55,16 +55,17 @@
 
   /* Machined Interface Specifics */
   --color-machined-header: #020617; /* slate-950 */
-  --color-machined-sidebar: #020617; /* slate-950 */
-  --color-machined-footer: #0f172a; /* slate-900 */
+  --color-machined-sidebar: #060b19; /* slightly lighter than header for depth */
+  --color-machined-footer: #0a0f1d;
   --color-machined-border: #1e293b; /* slate-800 */
   --color-machined-text-dim: #64748b; /* slate-500 */
   
   /* Premium Glow Tokens */
   --color-rose-glow: #ec4899;
   --color-indigo-glow: #8b5cf6;
-  --color-glass-bg: rgba(15, 23, 42, 0.7);
-  --color-glass-border: rgba(255, 255, 255, 0.1);
+  --color-glass-bg: rgba(15, 23, 42, 0.6);
+  --color-glass-border: rgba(255, 255, 255, 0.08);
+  --color-glass-highlight: rgba(255, 255, 255, 0.03);
 }
 
 /* Light Mode Overrides */
@@ -143,18 +144,74 @@
     height: 4px;
   }
   .custom-scrollbar::-webkit-scrollbar-track {
-    @apply bg-surface-container-low;
+    @apply bg-transparent;
   }
   .custom-scrollbar::-webkit-scrollbar-thumb {
-    @apply bg-outline-variant rounded-full;
+    @apply bg-outline-variant/40 hover:bg-outline-variant/80 rounded-full transition-colors;
   }
-  .glassmorphism {
-    @apply bg-glass-bg backdrop-blur-[12px] border border-glass-border shadow-[0_8px_32px_0_rgba(0,0,0,0.4)];
+  
+  /* Premium UI Utilities */
+  .glass-panel {
+    @apply bg-glass-bg backdrop-blur-[16px] border border-glass-border shadow-[0_8px_32px_0_rgba(0,0,0,0.5)] relative overflow-hidden;
   }
+  .glass-panel::before {
+    content: '';
+    @apply absolute inset-0 bg-gradient-to-br from-white/[0.04] to-transparent pointer-events-none;
+  }
+  .machined-panel {
+    @apply bg-surface-container-low border border-machined-border shadow-inner relative overflow-hidden;
+  }
+  .machined-panel::after {
+    content: '';
+    @apply absolute top-0 left-0 right-0 h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none;
+  }
+  
+  /* Terminal Effects */
+  .scanlines {
+    position: relative;
+  }
+  .scanlines::before {
+    content: " ";
+    display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    right: 0;
+    background: linear-gradient(
+      to bottom,
+      rgba(18, 16, 16, 0) 50%,
+      rgba(0, 0, 0, 0.1) 50%
+    );
+    background-size: 100% 4px;
+    z-index: 50;
+    pointer-events: none;
+  }
+  .flicker-text {
+    animation: flicker 0.15s infinite;
+  }
+  @keyframes flicker {
+    0% { opacity: 0.9; }
+    50% { opacity: 1; }
+    100% { opacity: 0.95; }
+  }
+  
+  /* Unified Typography */
+  .text-hud {
+    @apply font-mono text-[10px] uppercase tracking-[0.15em] font-bold;
+  }
+  .text-log {
+    @apply font-mono text-[11px] leading-relaxed;
+  }
+  
+  /* Glows */
   .rose-glow {
-    @apply shadow-[0_0_20px_rgba(236,72,153,0.2)];
+    @apply shadow-[0_0_20px_rgba(236,72,153,0.15)];
   }
   .indigo-glow {
-    @apply shadow-[0_0_20px_rgba(139,92,246,0.3)];
+    @apply shadow-[0_0_20px_rgba(139,92,246,0.2)];
+  }
+  .primary-glow {
+    @apply shadow-[0_0_25px_rgba(192,193,255,0.15)];
   }
 }

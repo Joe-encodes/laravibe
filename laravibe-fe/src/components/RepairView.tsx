@@ -145,9 +145,9 @@ export const RepairView: React.FC = () => {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-lowest">
       {/* Header HUD */}
-      <div className="h-16 border-b border-outline-variant bg-surface-container-low flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
+      <div className="h-16 border-b border-machined-border bg-surface-container-high/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 relative overflow-hidden z-20 shadow-md">
         {/* Glass Glow Accent */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-1 bg-primary/20 blur-md"></div>
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-1 bg-primary/40 blur-[8px]"></div>
         
         <div className="flex items-center gap-4">
           <div className="p-2 bg-surface-container-high border border-outline-variant rounded relative group">
@@ -155,8 +155,8 @@ export const RepairView: React.FC = () => {
             <div className="absolute inset-0 bg-primary/10 blur-sm rounded animate-pulse opacity-0 group-hover:opacity-100"></div>
           </div>
           <div>
-            <h1 className="text-xl font-semibold tracking-tight text-on-surface flex items-center gap-2">
-              Repair stream
+            <h1 className="text-lg font-bold tracking-tight text-on-surface flex items-center gap-2">
+              REPAIR_STREAM
               <button 
                 onClick={() => navigator.clipboard.writeText(submissionId || '')}
                 className="text-sm text-primary/70 font-semibold hover:text-primary transition-colors cursor-pointer"
@@ -171,37 +171,50 @@ export const RepairView: React.FC = () => {
                   <div 
                     key={s} 
                     className={cn(
-                      "w-1 h-1 rounded-full transition-all duration-500",
-                      stage === s ? "bg-primary scale-150 shadow-[0_0_8px_rgba(192,193,255,1)]" : "bg-outline-variant"
+                      "w-1.5 h-1.5 rounded-full transition-all duration-500",
+                      stage === s ? "bg-primary scale-150 shadow-[0_0_10px_rgba(192,193,255,1)]" : "bg-outline-variant/50"
                     )} 
                   />
                 ))}
               </div>
-              <span className="text-xs text-outline">Current state: <span className="text-primary">{stage.toLowerCase()}</span></span>
+              <span className="text-hud text-outline/80">CURRENT_STATE: <span className="text-primary flicker-text">{stage}</span></span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-8">
-          <div className="flex flex-col items-end">
-            <span className="mono text-[10px] font-black text-primary leading-none tracking-tighter">{iteration} / {maxIterations}</span>
-            <span className="mono text-[8px] text-outline uppercase font-bold tracking-widest mt-1">Cycle_Count</span>
+            <div className="flex flex-col items-end">
+              <span className="mono text-lg font-black text-primary leading-none tracking-tighter">{iteration} / {maxIterations}</span>
+              <span className="text-hud text-outline mt-1">CYCLE_COUNT</span>
+            </div>
+            
+            <div className="flex gap-2">
+              {!ongoing && stage === 'COMPLETE' && (
+                <button 
+                  onClick={() => window.location.reload()}
+                  className="px-4 py-2 font-mono text-[10px] font-black uppercase rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all flex items-center gap-2"
+                  title="Restream from Backend"
+                >
+                  <RotateCw className="w-3 h-3" />
+                  REPLAY
+                </button>
+              )}
+              <button 
+                disabled={ongoing}
+                onClick={() => navigate(`/iteration/${submissionId}`)}
+                className={cn(
+                  "px-6 py-2 font-mono text-[10px] font-black uppercase rounded border transition-all flex items-center gap-2",
+                  ongoing 
+                    ? "border-outline-variant/30 text-outline/50 cursor-wait bg-surface-container-highest/20" 
+                    : "bg-secondary/10 text-secondary border-secondary/50 hover:bg-secondary/20 hover:border-secondary active:scale-95 shadow-[0_0_15px_rgba(78,222,163,0.15)]"
+                )}
+              >
+                {ongoing ? <RotateCw className="w-3 h-3 animate-spin" /> : <TerminalIcon className="w-3 h-3" />}
+                {ongoing ? 'SYNCHRONISING...' : 'VIEW_DIFF'}
+              </button>
+            </div>
           </div>
-          <button 
-            disabled={ongoing}
-            onClick={() => navigate(`/iteration/${submissionId}`)}
-            className={cn(
-              "px-6 py-2 font-mono text-[10px] font-black uppercase rounded border transition-all flex items-center gap-2",
-              ongoing 
-                ? "border-outline-variant text-outline opacity-50 cursor-wait" 
-                : "bg-secondary text-on-secondary border-secondary hover:brightness-110 active:scale-95 shadow-lg shadow-secondary/10"
-            )}
-          >
-            {ongoing ? <RotateCw className="w-3 h-3 animate-spin" /> : <TerminalIcon className="w-3 h-3" />}
-            {ongoing ? 'Synchronising...' : 'View_Detailed_Diff'}
-          </button>
         </div>
-      </div>
 
       {/* Main 3-Panel HUD */}
       <div className="flex-1 flex overflow-hidden">
@@ -210,11 +223,11 @@ export const RepairView: React.FC = () => {
         <ContextDiscoveryPanel contexts={contexts} />
 
         {/* Panel 2: Terminal (Center) */}
-        <section className="flex-1 flex flex-col min-w-0 bg-surface-container-lowest relative">
-          <div className="h-10 px-4 flex items-center justify-between border-b border-outline-variant bg-surface-container-high/30 shrink-0">
+        <section className="flex-1 flex flex-col min-w-0 bg-surface-container-lowest relative scanlines">
+          <div className="h-12 px-6 flex items-center justify-between border-b border-machined-border bg-surface-container-high/30 backdrop-blur-md shrink-0 relative z-10">
             <div className="flex items-center gap-2">
-              <TerminalIcon className="w-3 h-3 text-outline" />
-              <h2 className="text-sm font-semibold text-on-surface-variant">Command log</h2>
+              <TerminalIcon className="w-4 h-4 text-primary" />
+              <h2 className="text-hud text-on-surface-variant">COMMAND_LOG</h2>
             </div>
           </div>
           
@@ -258,49 +271,49 @@ export const RepairView: React.FC = () => {
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
-                className="my-4 bg-indigo-500/10 border border-indigo-500/30 p-4 rounded-md relative overflow-hidden"
+                className="my-6 bg-indigo-500/5 border border-indigo-500/20 p-5 rounded-lg relative overflow-hidden backdrop-blur-sm"
               >
-                <div className="flex items-center gap-2 mb-2">
-                  <Brain className="w-3 h-3 text-indigo-400" />
-                  <span className="text-sm font-semibold text-indigo-400">AI diagnosis</span>
+                <div className="flex items-center gap-2 mb-3">
+                  <Brain className="w-4 h-4 text-indigo-400" />
+                  <span className="text-hud text-indigo-400">AI_DIAGNOSIS_INSIGHT</span>
                 </div>
-                <h4 className="mono text-[11px] font-bold text-indigo-300 mb-1">{insight.title}</h4>
-                <p className="text-[10px] text-on-surface-variant italic leading-relaxed">{insight.description}</p>
-                <div className="absolute top-0 right-0 p-2 opacity-5">
-                  <Brain className="w-12 h-12" />
+                <h4 className="mono text-sm font-bold text-indigo-300 mb-2 leading-snug">{insight.title}</h4>
+                <p className="text-log text-on-surface-variant/80 italic">{insight.description}</p>
+                <div className="absolute top-0 right-0 p-2 opacity-[0.03] pointer-events-none">
+                  <Brain className="w-24 h-24" />
                 </div>
               </motion.div>
             )}
           </div>
 
           {/* Bento Stats Footer */}
-          <div className="h-20 grid grid-cols-3 border-t border-outline-variant bg-surface-container-low shrink-0">
-            <div className="border-r border-outline-variant p-3 flex flex-col justify-between">
-              <span className="mono text-[8px] text-outline font-black uppercase tracking-widest">Mutation_Gate</span>
+          <div className="h-24 grid grid-cols-3 border-t border-machined-border bg-surface-container-low shrink-0 relative z-10">
+            <div className="border-r border-machined-border p-4 flex flex-col justify-between group hover:bg-surface-container/50 transition-colors">
+              <span className="text-hud text-outline/60 group-hover:text-outline transition-colors">MUTATION_GATE</span>
               <div className="flex items-center justify-between">
-                <span className="mono text-lg font-black text-primary">{stats.mutationScore}%</span>
-                <div className="w-20 bg-surface-container-highest h-1 rounded-full overflow-hidden">
-                  <div className="bg-primary h-full transition-all duration-1000" style={{ width: `${stats.mutationScore}%` }}></div>
+                <span className="mono text-xl font-black text-primary">{stats.mutationScore}%</span>
+                <div className="w-24 bg-surface-container-highest/50 h-1.5 rounded-full overflow-hidden shadow-inner">
+                  <div className="bg-primary h-full transition-all duration-1000 shadow-[0_0_10px_rgba(192,193,255,0.8)]" style={{ width: `${stats.mutationScore}%` }}></div>
                 </div>
               </div>
             </div>
-            <div className="border-r border-outline-variant p-3 flex flex-col justify-between">
-              <span className="mono text-[8px] text-outline font-black uppercase tracking-widest">Validation_Gate</span>
-              <div className="flex items-center gap-2">
+            <div className="border-r border-machined-border p-4 flex flex-col justify-between group hover:bg-surface-container/50 transition-colors">
+              <span className="text-hud text-outline/60 group-hover:text-outline transition-colors">VALIDATION_GATE</span>
+              <div className="flex items-center gap-3">
                 <div className={cn(
-                  "px-2 py-0.5 mono text-[10px] font-black rounded",
-                  stats.pestStatus === 'PASS' ? "bg-secondary/20 text-secondary border border-secondary/30" : "bg-outline-variant/20 text-outline"
+                  "px-2.5 py-1 mono text-[11px] font-black rounded-sm border",
+                  stats.pestStatus === 'PASS' ? "bg-secondary/10 text-secondary border-secondary/30 primary-glow" : "bg-outline-variant/10 text-outline border-outline-variant/20"
                 )}>
                   {stats.pestStatus}
                 </div>
-                <span className="mono text-[8px] text-outline font-bold uppercase truncate">{stats.pestStatus === 'PASS' ? 'Logic_Verified' : 'Awaiting_Gate'}</span>
+                <span className="text-hud text-outline truncate">{stats.pestStatus === 'PASS' ? 'LOGIC_VERIFIED' : 'AWAITING_GATE'}</span>
               </div>
             </div>
-            <div className="p-3 flex flex-col justify-between bg-primary/5">
-              <span className="mono text-[8px] text-primary font-black uppercase tracking-widest">Latency_Metrics</span>
-              <div className="flex items-baseline gap-1">
-                <span className="mono text-lg font-black text-primary">{(stats.duration / 1000).toFixed(1)}</span>
-                <span className="mono text-[9px] text-primary/60 font-black">SEC</span>
+            <div className="p-4 flex flex-col justify-between bg-primary/[0.02] hover:bg-primary/[0.05] transition-colors border-t-2 border-primary/20">
+              <span className="text-hud text-primary/60">LATENCY_METRICS</span>
+              <div className="flex items-baseline gap-1.5">
+                <span className="mono text-xl font-black text-primary flicker-text">{(stats.duration / 1000).toFixed(1)}</span>
+                <span className="text-hud text-primary/40">SEC</span>
               </div>
             </div>
           </div>

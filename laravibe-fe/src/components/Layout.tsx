@@ -1,4 +1,5 @@
-import React from 'react';
+// Force Vite HMR reload
+import React, { useState, useEffect } from 'react';
 import { 
   Code, 
   Bug, 
@@ -45,6 +46,27 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
     }
   }, [location.pathname]);
 
+  const [health, setHealth] = useState<{status?: string, docker?: string, ai?: string, db?: string} | null>(null);
+
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const res = await fetch('/api/health');
+        if (res.ok) {
+          const data = await res.json();
+          setHealth(data);
+        }
+      } catch (err) {
+        console.error('Failed to fetch health status:', err);
+      }
+    };
+    checkHealth();
+    
+    // Poll every 30 seconds
+    const interval = setInterval(checkHealth, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const navLinks = [
     { path: '/', icon: Code, title: 'Analyzer workspace' },
     { path: '/repair', icon: Bug, title: 'Active repair stream', useId: true },
@@ -64,13 +86,36 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
         </div>
         
         <div className="flex items-center gap-2 md:gap-3 overflow-x-auto no-scrollbar">
-          <div className="hidden sm:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-sm text-on-surface-variant">
-            <span className="w-2 h-2 rounded-full bg-secondary" />
-            <span className="font-medium text-secondary whitespace-nowrap">API connected</span>
+          {/* API Status */}
+          <div className="hidden sm:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
+            <span className={cn("w-2 h-2 rounded-full", health?.status === 'ok' ? "bg-secondary primary-glow" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+            <span className={cn("text-hud whitespace-nowrap", health?.status === 'ok' ? "text-secondary" : "text-error")}>
+              {health?.status === 'ok' ? 'API_CONNECTED' : 'API_OFFLINE'}
+            </span>
           </div>
-          <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 border border-primary/20 text-sm text-primary shrink-0">
-            <Brain className="w-4 h-4 shrink-0" />
-            <span className="font-bold uppercase tracking-widest text-[10px] whitespace-nowrap">Multi-agent cluster</span>
+
+          {/* Docker Status */}
+          <div className="hidden md:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
+            <span className={cn("w-2 h-2 rounded-full", health?.docker === 'connected' ? "bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.8)]" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+            <span className={cn("text-hud whitespace-nowrap", health?.docker === 'connected' ? "text-indigo-400" : "text-error")}>
+              DOCKER_{health?.docker === 'connected' ? 'ONLINE' : 'OFFLINE'}
+            </span>
+          </div>
+          
+          {/* DB Status */}
+          <div className="hidden lg:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
+            <span className={cn("w-2 h-2 rounded-full", health?.db === 'connected' ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+            <span className={cn("text-hud whitespace-nowrap", health?.db === 'connected' ? "text-emerald-400" : "text-error")}>
+              DB_{health?.db === 'connected' ? 'CONNECTED' : 'OFFLINE'}
+            </span>
+          </div>
+
+          {/* AI Model */}
+          <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 border border-primary/20 text-primary shrink-0 primary-glow">
+            <Brain className="w-3.5 h-3.5 shrink-0" />
+            <span className="text-hud whitespace-nowrap">
+              {health?.ai ? `AI: ${health.ai.replace(':', '_').toUpperCase()}` : 'AWAITING_AI'}
+            </span>
           </div>
         </div>
 
@@ -93,17 +138,24 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               const active = isPathActive(link.path);
               const path = link.useId ? (submissionId ? `/repair/${submissionId}` : '/') : link.path;
               return (
-                <button 
-                  key={i}
-                  onClick={() => navigate(path)}
-                  title={link.title}
-                  className={cn(
-                    "w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-150",
-                    active ? (link.admin ? "text-error bg-surface-container border border-error/20 shadow-sm" : "text-indigo-400 bg-surface-container border border-indigo-400/20 shadow-sm") : (link.admin ? "text-machined-text-dim hover:text-error hover:bg-surface-container/80" : "text-machined-text-dim hover:text-on-surface hover:bg-surface-container/80")
+                <div key={i} className="relative group">
+                  {/* Glowing active rail indicator */}
+                  {active && (
+                    <div 
+                      className="absolute -left-4 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full shadow-[0_0_10px_rgba(192,193,255,0.8)] animate-pulse"
+                    />
                   )}
-                >
-                  <link.icon className="w-5 h-5" />
-                </button>
+                  <button 
+                    onClick={() => navigate(path)}
+                    title={link.title}
+                    className={cn(
+                      "w-10 h-10 flex items-center justify-center rounded-xl transition-all duration-300 relative z-10",
+                      active ? (link.admin ? "text-error bg-error/10 border border-error/30 shadow-[0_0_15px_rgba(239,68,68,0.15)]" : "text-primary bg-primary/10 border border-primary/30 primary-glow") : (link.admin ? "text-machined-text-dim hover:text-error hover:bg-surface-container/80" : "text-machined-text-dim hover:text-on-surface hover:bg-surface-container/80 hover:shadow-lg")
+                    )}
+                  >
+                    <link.icon className={cn("w-5 h-5 transition-transform duration-300", active && "scale-110")} />
+                  </button>
+                </div>
               )
             })}
           </nav>
@@ -147,7 +199,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
             )}
           >
             <History className="w-4 h-4 text-emerald-400" />
-            <span className="font-mono text-[11px] uppercase tracking-widest font-bold text-on-surface-variant hidden sm:inline-block">HISTORY</span>
+            <span className="text-hud text-on-surface-variant hidden sm:inline-block">HISTORY</span>
           </button>
           <div className="h-4 w-px bg-machined-border" />
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
@@ -160,7 +212,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               disabled={!submissionId}
             >
               <List className="w-4 h-4" />
-              <span className="font-mono text-[11px] uppercase tracking-widest font-bold text-on-surface-variant hidden sm:inline-block">LOGS</span>
+              <span className="text-hud text-on-surface-variant hidden sm:inline-block">LOGS</span>
             </button>
             <button 
               onClick={() => submissionId && navigate(`/iteration/${submissionId}`)}
@@ -171,7 +223,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               disabled={!submissionId}
             >
               <Diff className="w-4 h-4" />
-              <span className="font-mono text-[11px] uppercase tracking-widest font-bold text-on-surface-variant hidden sm:inline-block">DIFF</span>
+              <span className="text-hud text-on-surface-variant hidden sm:inline-block">DIFF</span>
             </button>
             <button 
               onClick={() => submissionId && navigate(`/tests/${submissionId}`)}
@@ -182,21 +234,21 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               disabled={!submissionId}
             >
               <CheckCircle2 className="w-4 h-4" />
-              <span className="font-mono text-[11px] uppercase tracking-widest font-bold text-on-surface-variant hidden sm:inline-block">TESTS</span>
+              <span className="text-hud text-on-surface-variant hidden sm:inline-block">TESTS</span>
             </button>
           </div>
         </div>
         <div className="flex items-center gap-3 text-sm shrink-0 self-start md:self-auto w-full md:w-auto justify-between md:justify-end">
           <div className="flex items-center">
             {submissionId && (
-              <span className="font-mono text-[11px] text-outline mr-4">Node: <span className="text-primary">{submissionId.substring(0, 8)}</span></span>
+              <span className="text-hud text-outline mr-4">NODE: <span className="text-primary flicker-text">{submissionId.substring(0, 8)}</span></span>
             )}
-            <span className="font-mono text-[11px] text-machined-text-dim">
+            <span className="text-hud text-machined-text-dim">
               {
-                isPathActive('/repair') ? 'Repairing' : 
-                location.pathname === '/' ? 'Analyzing' :
-                (isPathActive('/history') || isPathActive('/iteration') || isPathActive('/tests')) ? 'Auditing' : 
-                'Idle'
+                isPathActive('/repair') ? 'REPAIR_SEQUENCE_ACTIVE' : 
+                location.pathname === '/' ? 'AWAITING_INPUT' :
+                (isPathActive('/history') || isPathActive('/iteration') || isPathActive('/tests')) ? 'AUDIT_MODE' : 
+                'IDLE'
               }
             </span>
           </div>
