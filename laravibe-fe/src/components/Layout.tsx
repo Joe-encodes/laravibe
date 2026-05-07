@@ -80,41 +80,66 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
     <div className="h-screen flex flex-col overflow-hidden bg-surface-container-lowest text-on-surface transition-colors duration-300">
       {/* TopAppBar */}
       <header className="bg-machined-header flex justify-between items-center w-full px-4 h-14 border-b border-machined-border font-mono z-50 shrink-0">
-        <div className="flex items-center gap-4">
-          <span className="text-lg font-semibold tracking-tight text-indigo-400">Laravibe</span>
-          <span className="text-machined-text-dim text-[11px] font-medium px-2 py-0.5 bg-machined-header border border-machined-border rounded hidden sm:inline-block">v1.0</span>
+        <div className="flex items-center gap-3">
+          {/* Brand Logo */}
+          <div className="flex items-center gap-1.5 group select-none">
+            {/* Terminal prompt decoration */}
+            <span className="text-secondary text-sm font-black opacity-60 group-hover:opacity-100 transition-opacity">&gt;_</span>
+            <span className="relative">
+              {/* Glowing background blur */}
+              <span className="absolute inset-0 blur-md bg-primary/20 rounded pointer-events-none" />
+              <span
+                className="relative font-black text-base tracking-[0.15em] uppercase"
+                style={{
+                  background: 'linear-gradient(90deg, #c0c1ff 0%, #8b5cf6 40%, #4edea3 80%, #c0c1ff 100%)',
+                  backgroundSize: '200% auto',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                  backgroundClip: 'text',
+                  animation: 'gradient-shift 4s linear infinite',
+                }}
+              >
+                LARAVIBE
+              </span>
+            </span>
+            {/* Blinking cursor */}
+            <span className="text-primary font-black text-base animate-pulse leading-none">█</span>
+          </div>
+          <span className="text-hud text-machined-text-dim border border-machined-border px-1.5 py-0.5 hidden sm:inline-block">v1.0</span>
         </div>
         
-        <div className="flex items-center gap-2 md:gap-3 overflow-x-auto no-scrollbar">
+        <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto no-scrollbar">
           {/* API Status */}
-          <div className="hidden sm:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
-            <span className={cn("w-2 h-2 rounded-full", health?.status === 'ok' ? "bg-secondary primary-glow" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+          <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
+            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.status === 'ok' ? "bg-secondary primary-glow" : "bg-error")} />
             <span className={cn("text-hud whitespace-nowrap", health?.status === 'ok' ? "text-secondary" : "text-error")}>
-              {health?.status === 'ok' ? 'API_CONNECTED' : 'API_OFFLINE'}
+              {health?.status === 'ok' ? 'API_OK' : 'API_OFFLINE'}
             </span>
           </div>
 
           {/* Docker Status */}
-          <div className="hidden md:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
-            <span className={cn("w-2 h-2 rounded-full", health?.docker === 'connected' ? "bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.8)]" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+          <div className="hidden md:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
+            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.docker === 'connected' ? "bg-indigo-400" : "bg-error")} />
             <span className={cn("text-hud whitespace-nowrap", health?.docker === 'connected' ? "text-indigo-400" : "text-error")}>
-              DOCKER_{health?.docker === 'connected' ? 'ONLINE' : 'OFFLINE'}
+              DOCKER_{health?.docker === 'connected' ? 'ON' : 'OFF'}
             </span>
           </div>
           
           {/* DB Status */}
-          <div className="hidden lg:flex items-center gap-2 rounded-full bg-machined-header/70 px-3 py-1 border border-machined-border text-on-surface-variant">
-            <span className={cn("w-2 h-2 rounded-full", health?.db === 'connected' ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : "bg-error shadow-[0_0_8px_rgba(239,68,68,0.8)]")} />
+          <div className="hidden lg:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
+            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.db === 'connected' ? "bg-emerald-400" : "bg-error")} />
             <span className={cn("text-hud whitespace-nowrap", health?.db === 'connected' ? "text-emerald-400" : "text-error")}>
-              DB_{health?.db === 'connected' ? 'CONNECTED' : 'OFFLINE'}
+              DB_{health?.db === 'connected' ? 'OK' : 'OFF'}
             </span>
           </div>
 
           {/* AI Model */}
-          <div className="flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1 border border-primary/20 text-primary shrink-0 primary-glow">
-            <Brain className="w-3.5 h-3.5 shrink-0" />
-            <span className="text-hud whitespace-nowrap">
-              {health?.ai ? `AI: ${health.ai.replace(':', '_').toUpperCase()}` : 'AWAITING_AI'}
+          <div className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 border border-primary/20 shrink-0">
+            <Brain className="w-3 h-3 text-primary shrink-0" />
+            <span className="text-hud text-primary whitespace-nowrap">
+              {health?.ai
+                ? health.ai.split(':')[0].trim().toUpperCase()
+                : 'AI...'}
             </span>
           </div>
         </div>
@@ -245,9 +270,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
             )}
             <span className="text-hud text-machined-text-dim">
               {
-                isPathActive('/repair') ? 'REPAIR_SEQUENCE_ACTIVE' : 
+                // Only show REPAIR_SEQUENCE_ACTIVE if we are actually on the repair page with a live submission
+                isPathActive('/repair') && submissionId ? 'REPAIR_SEQUENCE_ACTIVE' : 
                 location.pathname === '/' ? 'AWAITING_INPUT' :
-                (isPathActive('/history') || isPathActive('/iteration') || isPathActive('/tests')) ? 'AUDIT_MODE' : 
+                (isPathActive('/history') || isPathActive('/iteration') || isPathActive('/tests')) ? 'AUDIT_MODE' :
+                isPathActive('/reports') ? 'ANALYTICS_MODE' :
+                isPathActive('/repairs') ? 'NODE_MONITOR' :
                 'IDLE'
               }
             </span>

@@ -22,6 +22,7 @@ from api.limiter import limiter
 
 from api.config import get_settings
 from api.database import create_tables
+import api.models  # noqa: F401 — registers all ORM models on Base.metadata before create_all
 from api.routers.health import router as health_router
 from api.routers.auth import router as auth_router
 from api.routers.repair import router as repair_router
@@ -81,19 +82,25 @@ app.include_router(admin_router)
 
 # ── Static Files (Frontend) ──────────────────────────────────────────────────
 # In production, we serve the compiled React app from the /static folder.
-if os.path.exists("static"):
-    app.mount("/static", StaticFiles(directory="static"), name="static")
+if os.path.exists(os.path.join("static", "assets")):
+    app.mount("/assets", StaticFiles(directory=os.path.join("static", "assets")), name="assets")
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_frontend(full_path: str):
     """
     Serve index.html for all non-API routes (SPA support).
-    If a file exists in /static, the mount point above handles it.
-    Otherwise, we fall back to index.html for React routing.
+    Also serves individual files in the static folder like favicon.ico.
     """
-    if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc"):
+    if full_path.startswith("api/") or full_path.startswith("docs") or full_path.startswith("redoc") or full_path.startswith("openapi.json"):
         return JSONResponse(status_code=404, content={"detail": "Not Found"})
         
+    # Serve exact file if it exists (e.g., /favicon.ico, /vite.svg)
+    if full_path:
+        exact_path = os.path.join("static", full_path)
+        if os.path.isfile(exact_path):
+            return FileResponse(exact_path)
+            
+    # Fallback to index.html for React Router
     index_path = os.path.join("static", "index.html")
     if os.path.exists(index_path):
         return FileResponse(index_path)

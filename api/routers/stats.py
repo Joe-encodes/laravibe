@@ -200,13 +200,51 @@ async def get_unified_stats(
         success_count = status_map.get("success", 0)
         global_success_rate = (success_count / total * 100) if total > 0 else 0.0
 
+        # Model utilization: count iterations per model
+        model_counts_result = await db.execute(
+            select(
+                Iteration.ai_model_used,
+                func.count(Iteration.id).label("count")
+            )
+            .where(Iteration.ai_model_used.isnot(None))
+            .group_by(Iteration.ai_model_used)
+            .order_by(desc("count"))
+        )
+        model_rows = model_counts_result.all()
+        total_iters = sum(r[1] for r in model_rows) or 1
+        model_utilization = [
+            {"model": r[0], "count": r[1], "pct": round(r[1] / total_iters * 100, 1)}
+            for r in model_rows
+        ]
+
+        # Mutation score trend: last 20 completed submissions ordered by date
+        trend_result = await db.execute(
+            select(
+                Iteration.mutation_score,
+                Iteration.created_at,
+                Submission.id.label("sub_id"),
+            )
+            .join(Submission, Submission.id == Iteration.submission_id)
+            .where(Iteration.mutation_score.isnot(None))
+            .order_by(Iteration.created_at)
+            .limit(20)
+        )
+        mutation_trend = [
+            {"score": round(float(r[0]), 1), "label": str(r[2])[:8]}
+            for r in trend_result.all()
+        ]
+
         return {
             "global_success_rate": round(global_success_rate, 1),
             "avg_iterations": round(avg_iterations, 2),
             "avg_mutation_score": round(avg_mutation_score, 1),
             "total_repairs": total,
+            "total_submissions": total,
+            "total_failed": status_map.get("failed", 0) + status_map.get("error", 0),
             "categories": categories,
             "status_distribution": status_map,
+            "model_utilization": model_utilization,
+            "mutation_trend": mutation_trend,
         }
     except Exception as exc:
         logger.error(f"[Stats] unified stats query failed: {exc}", exc_info=True)

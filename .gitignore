@@ -54,3 +54,11 @@ laravibe-fe/node_modules/
 laravibe-fe/dist/
 laravibe-fe/.env*
 laravibe-fe/*.log
+
+# Scratch / Temp Project Folders
+docx_gen/
+scratch_env/
+proj-folder/
+
+# Frontend production build (owned by Dockerfile — never commit)
+/static/

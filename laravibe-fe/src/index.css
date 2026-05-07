@@ -1,8 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=IBM+Plex+Sans:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,700;0,800;1,400;1,800&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  /* Force JetBrains Mono everywhere — no fallback to sans */
+  --font-sans: "JetBrains Mono", ui-monospace, monospace;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 
   --color-on-surface: #dfe2f3;
@@ -106,6 +107,12 @@
 @layer base {
   body {
     @apply bg-surface-container-lowest text-on-surface font-mono;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+  
+  /* Force mono on all text elements — kills any browser default sans-serif */
+  h1, h2, h3, h4, h5, h6, p, span, label, button, input, textarea, select {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
   }
   
   /* Global Glass-Industrial Scrollbar */
@@ -138,6 +145,10 @@
   @keyframes spin-reverse {
     from { transform: rotate(360deg); }
     to { transform: rotate(0deg); }
+  }
+  @keyframes gradient-shift {
+    0%   { background-position: 0% center; }
+    100% { background-position: 200% center; }
   }
   .custom-scrollbar::-webkit-scrollbar {
     width: 4px;
