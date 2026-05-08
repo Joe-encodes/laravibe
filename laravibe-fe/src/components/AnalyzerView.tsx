@@ -87,7 +87,7 @@ export const AnalyzerView: React.FC = () => {
               <div className="relative">
                 <div className="absolute -inset-0.5 bg-primary/20 rounded-lg blur opacity-0 group-focus-within:opacity-100 transition duration-500"></div>
                 <textarea 
-                  className="relative w-full h-20 bg-surface-container/50 border border-primary/20 rounded-lg p-3 text-sm text-on-surface outline-none focus:border-primary focus:bg-surface-container/80 transition-all resize-none placeholder:text-on-surface-variant/30 custom-scrollbar shadow-inner"
+                  className="relative w-full h-20 bg-surface-container/50 border border-primary/20 rounded-lg p-3 text-sm text-on-surface outline-none focus:border-primary focus:bg-surface-container/80 transition-all resize-y placeholder:text-on-surface-variant/30 custom-scrollbar shadow-inner"
                   placeholder="Describe the problem or paste relevant context."
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
@@ -100,7 +100,7 @@ export const AnalyzerView: React.FC = () => {
               <div className="relative flex-1 flex flex-col">
                 <div className="absolute -inset-0.5 bg-sky-500/20 rounded-lg blur opacity-0 group-focus-within:opacity-100 transition duration-500"></div>
                 <textarea 
-                  className="relative flex-1 w-full bg-surface-container/50 border border-sky-500/20 rounded-lg p-4 outline-none resize-none font-mono text-sm text-on-surface focus:border-sky-500 focus:bg-surface-container/80 transition-all placeholder:text-on-surface-variant/20 leading-relaxed custom-scrollbar shadow-inner"
+                  className="relative flex-1 w-full bg-surface-container/50 border border-sky-500/20 rounded-lg p-4 outline-none resize-y font-mono text-sm text-on-surface focus:border-sky-500 focus:bg-surface-container/80 transition-all placeholder:text-on-surface-variant/20 leading-relaxed custom-scrollbar shadow-inner"
                   placeholder={'<?php\n\n// Paste your broken Laravel code here...\n// The system will analyze errors and generate a patch.'}
                   value={code}
                   onChange={(e) => setCode(e.target.value)}

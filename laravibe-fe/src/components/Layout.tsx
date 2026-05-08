@@ -79,7 +79,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-surface-container-lowest text-on-surface transition-colors duration-300">
       {/* TopAppBar */}
-      <header className="bg-machined-header flex justify-between items-center w-full px-4 h-14 border-b border-machined-border font-mono z-50 shrink-0">
+      <header className="bg-machined-header flex justify-between items-center w-full px-4 h-14 border-b border-machined-border font-sans z-50 shrink-0">
         <div className="flex items-center gap-3">
           {/* Brand Logo */}
           <div className="flex items-center gap-1.5 group select-none">

@@ -67,7 +67,7 @@ export const IterationView: React.FC = () => {
             <h1 className="text-4xl font-mono font-black text-on-surface tracking-tighter leading-none mb-3 uppercase italic">
               REPAIR_CYCLE_SUMMARY
             </h1>
-            <div className="flex items-center gap-2 text-on-surface-variant max-w-2xl font-mono text-sm">
+            <div className="flex items-center gap-2 text-on-surface-variant max-w-2xl font-sans text-sm">
               <Terminal className="w-4 h-4 shrink-0 text-primary" />
               <span>Target analysis completed with <span className="text-primary font-bold">{submission.iterations?.length || 0} iterations</span>. Logic verified against Pest test suite.</span>
             </div>
@@ -77,7 +77,7 @@ export const IterationView: React.FC = () => {
                   <Brain className="w-3 h-3 text-primary" />
                   <span className="mono text-[8px] font-black uppercase text-primary tracking-widest">Developer Context</span>
                 </div>
-                <p className="text-on-surface-variant text-xs font-mono leading-tight pl-5 border-l border-primary/20">
+                <p className="text-on-surface-variant text-xs font-sans leading-tight pl-5 border-l border-primary/20">
                   {submission.user_prompt}
                 </p>
               </div>

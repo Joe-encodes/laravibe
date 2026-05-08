@@ -67,7 +67,7 @@ export const HistoryView: React.FC = () => {
             <h1 className="font-mono text-3xl md:text-4xl font-black tracking-tighter text-on-surface uppercase italic flex items-center gap-4">
               Repair_Hub
             </h1>
-            <p className="text-on-surface-variant font-mono max-w-2xl text-sm leading-relaxed opacity-70">
+            <p className="text-on-surface-variant font-sans max-w-2xl text-sm leading-relaxed opacity-70">
               Browse the latest synthesized patches and diagnostic history. Every iteration is logged for audit visibility.
             </p>
           </div>
@@ -103,56 +103,59 @@ export const HistoryView: React.FC = () => {
                 ))}
             </div>
             
-            <div className="flex-1 flex flex-col bg-surface-container-low/30 border border-outline-variant/20 rounded-md overflow-hidden">
-                <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    <table className="w-full text-left border-collapse min-w-[600px]">
-                        <thead className="sticky top-0 bg-surface-container-high z-10">
-                            <tr className="border-b border-outline-variant">
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Repair_ID</th>
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Status</th>
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Iterations</th>
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Prompt_Snippet</th>
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Date</th>
-                                <th className="p-4 font-mono text-[10px] text-outline uppercase font-black">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {isLoading && historyItems.length === 0 ? (
-                                <tr>
-                                    <td colSpan={6} className="p-8 text-center text-primary font-mono text-sm animate-pulse">Loading archive interface...</td>
-                                </tr>
-                            ) : filteredHistory.length === 0 ? (
-                                <tr>
-                                    <td colSpan={6} className="p-8 text-center text-outline font-mono text-sm">No matching items found.</td>
-                                </tr>
-                            ) : (
-                                filteredHistory.map((item) => (
-                                <tr key={item.id} className="border-b border-outline-variant/30 hover:bg-primary/5 transition-colors group">
-                                    <td className="p-4 font-mono text-xs text-on-surface">{item.id}</td>
-                                    <td className="p-4 font-mono text-[10px] font-black">
-                                        <span className={cn(
-                                            "px-2 py-0.5 rounded-sm",
-                                            item.status === 'COMMITTED' ? "bg-secondary/10 text-secondary" : (item.status === 'ACTIVE' ? "bg-primary text-on-primary" : "bg-error/10 text-error")
-                                        )}>
-                                            {item.status}
-                                        </span>
-                                    </td>
-                                    <td className="p-4 font-mono text-xs text-on-surface-variant flex items-center gap-1"><Zap className="w-3 h-3 text-secondary"/>{item.codeSnippet}</td>
-                                    <td className="p-4 font-mono text-[10px] text-outline max-w-[200px] truncate">{item.userPrompt || item.category}</td>
-                                    <td className="p-4 font-mono text-[10px] text-outline">{item.fullDate} {item.date}</td>
-                                    <td className="p-4">
-                                        <button 
-                                            onClick={() => navigate(item.status === 'ACTIVE' ? `/repair/${item.id}` : `/iteration/${item.id}`)}
-                                            className="text-primary font-mono text-[11px] font-black uppercase tracking-widest hover:underline group-hover:translate-x-1 transition-transform inline-flex items-center gap-2"
-                                        >
-                                            Inspect <ChevronRight className="w-3 h-3" />
-                                        </button>
-                                    </td>
-                                </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+            <div className="flex-1 flex flex-col bg-surface-container-low/30 rounded-md overflow-hidden">
+                <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+                  {isLoading && historyItems.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-primary font-mono animate-pulse">Loading archive interface...</div>
+                  ) : filteredHistory.length === 0 ? (
+                    <div className="flex items-center justify-center h-full text-outline font-mono">No matching items found.</div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pb-4">
+                      {filteredHistory.map((item) => (
+                        <div 
+                          key={item.id}
+                          onClick={() => navigate(item.status === 'ACTIVE' ? `/repair/${item.id}` : `/iteration/${item.id}`)}
+                          className={cn(
+                            "bg-surface-container-low border p-5 flex flex-col cursor-pointer group hover:-translate-y-1 transition-all relative overflow-hidden",
+                            item.status === 'ACTIVE' ? "border-primary shadow-[0_0_15px_rgba(99,102,241,0.1)]" : "border-outline-variant/30 hover:border-primary/50"
+                          )}
+                        >
+                          {/* Glowing Accent */}
+                          <div className={cn(
+                            "absolute top-0 right-0 w-24 h-24 -mr-12 -mt-12 bg-gradient-to-br transition-opacity opacity-0 group-hover:opacity-10",
+                            item.status === 'COMMITTED' ? "from-secondary to-transparent" : (item.status === 'ACTIVE' ? "from-primary to-transparent" : "from-error to-transparent")
+                          )}></div>
+
+                          <div className="flex justify-between items-start mb-4 font-mono text-[10px] font-black">
+                            <span className={cn(
+                              "px-2 py-0.5 rounded-sm flex items-center gap-1",
+                              item.status === 'COMMITTED' ? "bg-secondary/10 text-secondary" : (item.status === 'ACTIVE' ? "bg-primary text-on-primary" : "bg-error/10 text-error")
+                            )}>
+                              {item.status === 'ACTIVE' && <div className="w-1.5 h-1.5 rounded-full bg-current animate-pulse mr-1"></div>}
+                              {item.status}
+                            </span>
+                            <span className="text-outline/60">{item.fullDate} {item.date}</span>
+                          </div>
+
+                          <div className="flex-1 space-y-3">
+                            <div>
+                              <h3 className="text-sm font-black text-on-surface group-hover:text-primary transition-colors font-sans">{item.title}</h3>
+                              <div className="text-[10px] text-outline font-semibold mt-1 font-sans truncate">{item.userPrompt || item.category}</div>
+                            </div>
+                            <div className="font-sans text-[11px] font-bold text-on-surface-variant flex items-center gap-2">
+                              <Zap className="w-3 h-3 text-secondary" />
+                              {item.codeSnippet}
+                            </div>
+                          </div>
+
+                          <div className="mt-4 pt-3 border-t border-outline-variant/30 flex justify-between items-center opacity-50 group-hover:opacity-100 transition-all font-sans">
+                            <span className="text-xs font-semibold text-primary">Inspect</span>
+                            <ChevronRight className="w-4 h-4 text-primary" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Pagination Footer */}

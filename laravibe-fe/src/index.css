@@ -67,6 +67,7 @@
   --color-glass-bg: rgba(15, 23, 42, 0.6);
   --color-glass-border: rgba(255, 255, 255, 0.08);
   --color-glass-highlight: rgba(255, 255, 255, 0.03);
+  --color-scanlines: rgba(0, 0, 0, 0.15);
 }
 
 /* Light Mode Overrides */
@@ -102,6 +103,7 @@
   --color-machined-footer: #f1f5f9;
   --color-machined-border: #cbd5e1;
   --color-machined-text-dim: #1e293b; /* Slate 800 */
+  --color-scanlines: rgba(0, 0, 0, 0.04);
 }
 
 @layer base {
@@ -185,8 +187,8 @@
     right: 0;
     background: linear-gradient(
       to bottom,
-      rgba(18, 16, 16, 0) 50%,
-      rgba(0, 0, 0, 0.1) 50%
+      transparent 50%,
+      var(--color-scanlines) 50%
     );
     background-size: 100% 4px;
     z-index: 50;

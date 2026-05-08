@@ -65,7 +65,7 @@ export const RepairsListView: React.FC = () => {
               Active_Nodes
               <div className="h-2 w-2 rounded-full bg-primary animate-ping"></div>
             </h1>
-            <p className="text-on-surface-variant font-mono max-w-2xl text-sm leading-relaxed opacity-70">
+            <p className="text-on-surface-variant font-sans max-w-2xl text-sm leading-relaxed opacity-70">
               Real-time telemetry and management of ongoing repair synthesis across the Laravibe cluster.
             </p>
           </div>
@@ -136,16 +136,16 @@ export const RepairsListView: React.FC = () => {
 
                     <div className="flex-1 space-y-3">
                       <div>
-                        <h3 className="text-sm font-black text-on-surface group-hover:text-primary transition-colors font-mono">{item.title}</h3>
-                        <div className="text-[10px] text-outline font-semibold mt-1 font-mono">{item.category}</div>
+                        <h3 className="text-sm font-black text-on-surface group-hover:text-primary transition-colors font-sans">{item.title}</h3>
+                        <div className="text-[10px] text-outline font-semibold mt-1 font-sans">{item.category}</div>
                       </div>
-                      <div className="font-mono text-[11px] font-bold text-on-surface-variant flex items-center gap-2">
+                      <div className="font-sans text-[11px] font-bold text-on-surface-variant flex items-center gap-2">
                         <Zap className="w-3 h-3 text-secondary" />
                         {item.iterations} cycles executed
                       </div>
                     </div>
 
-                    <div className="mt-4 pt-3 border-t border-outline-variant/30 flex justify-between items-center opacity-50 group-hover:opacity-100 transition-all font-mono">
+                    <div className="mt-4 pt-3 border-t border-outline-variant/30 flex justify-between items-center opacity-50 group-hover:opacity-100 transition-all font-sans">
                       <span className="text-xs font-semibold text-primary">View stream</span>
                       <ArrowRight className="w-4 h-4 text-primary" />
                     </div>
