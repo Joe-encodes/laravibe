@@ -237,11 +237,10 @@ async def run_repair_loop(
                     async for evt_type, evt_data in pipeline.run_pipeline(
                         code, structured_error_for_llm, boost_ctx, previous_attempts, past_repairs, prompt, escalation_ctx, current_post_mortem, iteration_num=iteration_num
                     ):
-                        event = _log_event(evt_type, evt_data)
-                        
                         if evt_type == "final_result":
                             ai_resp, models = evt_data
                         else:
+                            event = _log_event(evt_type, evt_data)
                             # Forward internal pipeline events to the SSE queue
                             yield event
 
