@@ -58,9 +58,9 @@ export const RepairView: React.FC = () => {
             setLogs(prev => [...prev, { id: 'p', timestamp: ts, type: 'AI', message: `INIT_INSTRUCTION: "${data.prompt}"` }]);
           }
         } else if (event === 'log_line') {
-          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: data.msg }]);
-          if (data.msg.includes('Spinning up')) setStage('SPINNING');
-          if (data.msg.includes('Executing code')) setStage('LINTING');
+          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'INFO', message: data.msg || 'Unknown event' }]);
+          if (data.msg && data.msg.includes('Spinning up')) setStage('SPINNING');
+          if (data.msg && data.msg.includes('Executing code')) setStage('LINTING');
         } else if (event === 'iteration_start') {
           setIteration(data.iteration);
           setMaxIterations(data.max);
@@ -79,10 +79,10 @@ export const RepairView: React.FC = () => {
           setStage('TESTING');
           setStats(prev => ({ 
             ...prev, 
-            pestStatus: data.status.toUpperCase(),
+            pestStatus: data.status ? data.status.toUpperCase() : 'UNKNOWN',
             duration: prev.duration + (data.duration_ms || 0)
           }));
-          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'TEST', message: `PEST_GATE: ${data.status.toUpperCase()}` }]);
+          setLogs(prev => [...prev, { id: Math.random().toString(), timestamp: ts, type: 'TEST', message: `PEST_GATE: ${data.status ? data.status.toUpperCase() : 'UNKNOWN'}` }]);
         } else if (event === 'mutation_result') {
           setStage('MUTATING');
           setStats(prev => ({ 
