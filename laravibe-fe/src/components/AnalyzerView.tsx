@@ -71,7 +71,7 @@ export const AnalyzerView: React.FC = () => {
 
       <div className="flex-1 flex overflow-hidden">
         {/* Left Panel: INPUT */}
-        <section className="w-1/3 flex flex-col border-r border-machined-border machined-panel z-10 shadow-2xl">
+        <section className="w-1/3 min-w-[300px] max-w-[50vw] resize-x overflow-auto flex flex-col border-r border-machined-border machined-panel z-10 shadow-2xl">
           <div className="h-12 px-4 flex items-center justify-between border-b border-machined-border bg-surface-container-high/80 backdrop-blur-sm">
             <h2 className="text-hud text-on-surface-variant flex items-center gap-2">
               <span className="w-1.5 h-1.5 bg-primary rounded-full animate-pulse" />

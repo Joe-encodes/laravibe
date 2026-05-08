@@ -165,6 +165,7 @@ async def run_repair_loop(
                     fix_description = "Initial code was correct or successfully patched"
                 await context.store_repair_success(db, error_logs, locals().get('ai_resp', MockResp()), iteration_num)
                 
+                submission.total_iterations = iteration_num
                 await db.commit()
                 yield {"event": "log_line", "data": {"msg": "✨ Code verified as correct! Ending repair loop."}}
                 yield {"event": "complete", "data": {"status": "success", "iterations": iteration_num}}
@@ -257,10 +258,12 @@ async def run_repair_loop(
                         code_input=code,
                         error_logs=error_logs + f"\n\n[SYSTEM] AI pipeline failed: {err_msg}",
                         ai_response=f'{{"error": "pipeline_failed"}}',
+                        ai_prompt=getattr(ai_resp, "prompt", "") if ai_resp else "",
                         status="failed",
                         duration_ms=int((time.time() - start_time) * 1000),
                         pipeline_logs=json.dumps(iteration_events),
                     ))
+                    submission.total_iterations = iteration_num
                     await db.commit()
                     previous_attempts.append({
                         "diagnosis": "Pipeline Failure",
@@ -280,6 +283,7 @@ async def run_repair_loop(
                     code_input=code,
                     error_logs=error_logs + "\n\n[SYSTEM] AI returned zero patches.",
                     ai_response=ai_resp.raw,
+                    ai_prompt=getattr(ai_resp, "prompt", ""),
                     planner_model=models.get("planner"),
                     executor_model=models.get("executor"),
                     reviewer_model=models.get("reviewer"),
@@ -287,6 +291,7 @@ async def run_repair_loop(
                     duration_ms=int((time.time() - start_time) * 1000),
                     pipeline_logs=json.dumps(iteration_events),
                 ))
+                submission.total_iterations = iteration_num
                 await db.commit()
                 previous_attempts.append({
                     "diagnosis": ai_resp.diagnosis,
@@ -325,6 +330,7 @@ async def run_repair_loop(
                     code_input=code,
                     error_logs=error_logs + f"\n\n[PATCH FAILED] {pae}",
                     ai_response=ai_resp.raw,
+                    ai_prompt=getattr(ai_resp, "prompt", ""),
                     planner_model=models.get("planner"),
                     executor_model=models.get("executor"),
                     reviewer_model=models.get("reviewer"),
@@ -426,6 +432,7 @@ async def run_repair_loop(
                     code_input=code,
                     error_logs=error_logs,
                     ai_response=ai_resp.raw,
+                    ai_prompt=getattr(ai_resp, "prompt", ""),
                     patch_applied=patch_summary,
                     pest_test_code=pest_code,
                     planner_model=models.get("planner"),
@@ -555,6 +562,7 @@ async def run_repair_loop(
                     code_input=code,
                     error_logs=error_logs,
                     ai_response=ai_resp.raw,
+                    ai_prompt=getattr(ai_resp, "prompt", ""),
                     patch_applied=patch_summary,
                     pest_test_code=pest_code,
                     pest_test_result=pest_res.get("output", "")[:2000],
@@ -596,11 +604,13 @@ async def run_repair_loop(
                     else:
                         submission.final_code = code
                     await context.store_repair_success(db, error_logs, ai_resp, iteration_num)
+                    submission.total_iterations = iteration_num
                     await db.commit()
                     yield _log_event("log_line", {"msg": "✅ JOB DONE: Success! All tests passed and mutation gate satisfied."})
                     yield _log_event("complete", {"status": "success", "iterations": iteration_num, "mutation_score": mutation_score})
                     return
 
+                submission.total_iterations = iteration_num
                 await db.commit()
 
             except Exception as e:

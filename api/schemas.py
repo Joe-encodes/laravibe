@@ -48,6 +48,13 @@ class IterationOut(BaseModel):
     pest_test_result: Optional[str] = None
     mutation_score: Optional[float] = None
     duration_ms: Optional[int] = None
+    planner_model: Optional[str] = None
+    executor_model: Optional[str] = None
+    reviewer_model: Optional[str] = None
+    failure_reason: Optional[str] = None
+    failure_details: Optional[str] = None
+    pm_category: Optional[str] = None
+    pm_strategy: Optional[str] = None
     pipeline_logs: Optional[str] = None
     created_at: datetime
     model_config = {"from_attributes": True}

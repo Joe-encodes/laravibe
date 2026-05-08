@@ -237,21 +237,88 @@ export const IterationView: React.FC = () => {
                     </pre>
                   </div>
 
-                  <div className="grid grid-cols-3 gap-6">
-                     <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
-                        <span className="block text-[9px] text-outline uppercase font-bold mb-1">Mutation Score</span>
-                        <span className="text-xl font-mono font-black text-secondary">{submission.iterations?.[selectedIteration]?.mutation_score || '0.0'}%</span>
+                     <div className="grid grid-cols-3 gap-6">
+                        <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
+                           <span className="block text-[9px] text-outline uppercase font-bold mb-1">Mutation Score</span>
+                           <span className="text-xl font-mono font-black text-secondary">{submission.iterations?.[selectedIteration]?.mutation_score || '0.0'}%</span>
+                        </div>
+                        <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
+                           <span className="block text-[9px] text-outline uppercase font-bold mb-1">Execution Latency</span>
+                           <span className="text-xl font-mono font-black text-primary">{submission.iterations?.[selectedIteration]?.duration_ms || '0'}ms</span>
+                        </div>
+                        <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
+                           <span className="block text-[9px] text-outline uppercase font-bold mb-1">Iteration Code ID</span>
+                           <span className="text-xl font-mono font-black text-outline">{submission.iterations?.[selectedIteration]?.id?.substring(0,8) || '---'}</span>
+                        </div>
                      </div>
-                     <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
-                        <span className="block text-[9px] text-outline uppercase font-bold mb-1">Execution Latency</span>
-                        <span className="text-xl font-mono font-black text-primary">{submission.iterations?.[selectedIteration]?.duration_ms || '0'}ms</span>
+
+                     {/* Additional Execution Data */}
+                     {(submission.iterations?.[selectedIteration]?.pest_test_result || submission.iterations?.[selectedIteration]?.failure_reason) && (
+                       <div className="grid grid-cols-2 gap-6">
+                         {submission.iterations?.[selectedIteration]?.pest_test_result && (
+                           <div className="glassmorphism p-6 rounded-lg relative overflow-hidden">
+                             <div className="flex items-center gap-2 mb-4 text-outline relative z-10">
+                               <Terminal className="w-4 h-4" />
+                               <span className="font-mono text-[11px] font-black uppercase tracking-widest">Pest_Execution_Logs</span>
+                             </div>
+                             <pre className="text-[11px] text-outline/80 bg-transparent overflow-auto max-h-[300px] whitespace-pre-wrap relative z-10 custom-scrollbar">
+                               {submission.iterations?.[selectedIteration]?.pest_test_result}
+                             </pre>
+                           </div>
+                         )}
+
+                         {submission.iterations?.[selectedIteration]?.failure_reason && (
+                           <div className="glassmorphism p-6 rounded-lg border-error/20 bg-error/5 relative overflow-hidden">
+                             <div className="flex items-center gap-2 mb-4 text-error relative z-10">
+                               <AlertCircle className="w-4 h-4" />
+                               <span className="font-mono text-[11px] font-black uppercase tracking-widest">Failure_Trace</span>
+                             </div>
+                             <div className="mb-2 text-error font-bold text-sm">{submission.iterations?.[selectedIteration]?.failure_reason}</div>
+                             <pre className="text-[11px] text-error/80 bg-transparent overflow-auto max-h-[250px] whitespace-pre-wrap relative z-10 custom-scrollbar">
+                               {submission.iterations?.[selectedIteration]?.failure_details}
+                             </pre>
+                           </div>
+                         )}
+                       </div>
+                     )}
+
+                     {/* Models & Post Mortem */}
+                     <div className="grid grid-cols-2 gap-6 pb-12">
+                       <div className="glassmorphism p-6 rounded-lg">
+                         <span className="block font-mono text-[11px] font-black uppercase tracking-widest text-primary mb-4">Model_Telemetry</span>
+                         <div className="space-y-2 text-[10px]">
+                           <div className="flex justify-between border-b border-outline/20 pb-1">
+                             <span className="text-outline">Planner</span>
+                             <span className="text-on-surface">{submission.iterations?.[selectedIteration]?.planner_model || 'N/A'}</span>
+                           </div>
+                           <div className="flex justify-between border-b border-outline/20 pb-1">
+                             <span className="text-outline">Executor</span>
+                             <span className="text-on-surface">{submission.iterations?.[selectedIteration]?.executor_model || 'N/A'}</span>
+                           </div>
+                           <div className="flex justify-between border-b border-outline/20 pb-1">
+                             <span className="text-outline">Reviewer</span>
+                             <span className="text-on-surface">{submission.iterations?.[selectedIteration]?.reviewer_model || 'N/A'}</span>
+                           </div>
+                         </div>
+                       </div>
+                       
+                       {submission.iterations?.[selectedIteration]?.pm_category && (
+                         <div className="glassmorphism p-6 rounded-lg border-tertiary/20 bg-tertiary/5">
+                           <span className="block font-mono text-[11px] font-black uppercase tracking-widest text-tertiary mb-4">Critic_Post_Mortem</span>
+                           <div className="mb-2">
+                             <span className="text-outline text-[9px] uppercase">Category: </span>
+                             <span className="text-tertiary font-bold text-[11px]">{submission.iterations?.[selectedIteration]?.pm_category}</span>
+                           </div>
+                           <div>
+                             <span className="text-outline text-[9px] uppercase block mb-1">Strategy:</span>
+                             <p className="text-[11px] text-on-surface-variant leading-relaxed">
+                               {submission.iterations?.[selectedIteration]?.pm_strategy}
+                             </p>
+                           </div>
+                         </div>
+                       )}
                      </div>
-                     <div className="p-4 bg-surface-container-low border border-outline-variant rounded">
-                        <span className="block text-[9px] text-outline uppercase font-bold mb-1">Iteration Code ID</span>
-                        <span className="text-xl font-mono font-black text-outline">{submission.iterations?.[selectedIteration]?.id?.substring(0,8) || '---'}</span>
-                     </div>
-                  </div>
-                </motion.div>
+                  </motion.div>
               ) : (
                 <motion.div
                   key={tab}
