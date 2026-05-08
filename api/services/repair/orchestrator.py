@@ -24,6 +24,17 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _safe_json_dumps(obj) -> str:
+    """JSON-serialize obj, falling back to str() for non-serializable types."""
+    class _Fallback(json.JSONEncoder):
+        def default(self, o):
+            try:
+                return super().default(o)
+            except TypeError:
+                return str(o)
+    return json.dumps(obj, cls=_Fallback)
+
+
 async def run_repair_loop(
     submission_id: str,
     code: str,
@@ -148,8 +159,8 @@ async def run_repair_loop(
             structured_error_for_llm = format_classified_error_for_llm(classified_error)
             
             # Stream the raw error to the frontend so it can display the live logs
-            yield {"event": "error_detected", "data": {"logs": error_logs[:1000]}}
-            yield {"event": "log_line", "data": {"msg": f"Error classified: {classified_error.category}"}}
+            yield _log_event("error_detected", {"logs": error_logs[:1000]})
+            yield _log_event("log_line", {"msg": f"Error classified: {classified_error.category}"})
 
             # --- SUCCESS EXIT: If code is correct (either initially or after a patch) ---
             if classified_error.category == "none":
@@ -183,14 +194,14 @@ async def run_repair_loop(
                 boost_component_type = "unknown"
                 boost_schema = ""
                 boost_ctx = boost_ctx_raw
-            yield {
-                "event": "boost_queried",
-                "data": {
+            yield _log_event(
+                "boost_queried",
+                {
                     "component_type": boost_component_type,
                     "context_text": boost_ctx[:500],  # trim for SSE
                     "schema": boost_schema[:300],
                 }
-            }
+            )
 
             signatures = await discovery.discover_referenced_signatures(container, code)
             if signatures:
@@ -260,7 +271,7 @@ async def run_repair_loop(
                         ai_prompt=getattr(ai_resp, "prompt", "") if ai_resp else "",
                         status="failed",
                         duration_ms=int((time.time() - start_time) * 1000),
-                        pipeline_logs=json.dumps(iteration_events),
+                        pipeline_logs=_safe_json_dumps(iteration_events),
                     ))
                     submission.total_iterations = iteration_num
                     await db.commit()
@@ -288,7 +299,7 @@ async def run_repair_loop(
                     reviewer_model=models.get("reviewer"),
                     status="failed",
                     duration_ms=int((time.time() - start_time) * 1000),
-                    pipeline_logs=json.dumps(iteration_events),
+                    pipeline_logs=_safe_json_dumps(iteration_events),
                 ))
                 submission.total_iterations = iteration_num
                 await db.commit()
@@ -338,7 +349,7 @@ async def run_repair_loop(
                     failure_details=str(pae)[:500],
                     boost_context=boost_ctx[:2000] if boost_ctx else None,
                     duration_ms=int((time.time() - start_time) * 1000),
-                    pipeline_logs=json.dumps(iteration_events),
+                    pipeline_logs=_safe_json_dumps(iteration_events),
                 ))
                 previous_attempts.append({
                     "diagnosis": ai_resp.diagnosis,
@@ -445,7 +456,7 @@ async def run_repair_loop(
                     failure_details=failure_details,
                     pm_category=pm_category,
                     pm_strategy=pm_strategy,
-                    pipeline_logs=json.dumps(iteration_events),
+                    pipeline_logs=_safe_json_dumps(iteration_events),
                 ))
                 
                 previous_attempts.append({
@@ -576,7 +587,7 @@ async def run_repair_loop(
                     failure_details=failure_details,
                     pm_category=pm_category,
                     pm_strategy=pm_strategy,
-                    pipeline_logs=json.dumps(iteration_events),
+                    pipeline_logs=_safe_json_dumps(iteration_events),
                 ))
 
                 previous_attempts.append({
