@@ -150,10 +150,16 @@ async def stream_repair(
     async def event_generator() -> AsyncGenerator[str, None]:
         import asyncio
         from sqlalchemy.orm import selectinload
+
+        # Tell the browser to reconnect after 5s if connection drops
+        yield "retry: 5000\n\n"
+
+        def _fmt(evt_type: str, evt_data: dict) -> str:
+            """Format as plain SSE `data:` line (no named event) so EventSource.onmessage fires."""
+            return f"data: {json.dumps({'event': evt_type, 'data': evt_data})}\n\n"
         
         # 1. If submission is already finished, playback from DB
         if submission.status in ["success", "failed"]:
-            # Reload with iterations
             stmt = select(Submission).where(Submission.id == submission_id).options(selectinload(Submission.iterations))
             res = await db.execute(stmt)
             sub_with_its = res.scalar_one()
@@ -163,41 +169,43 @@ async def stream_repair(
                     try:
                         logs = json.loads(iteration.pipeline_logs)
                         for evt in logs:
-                            evt_type = evt.get("event", "info")
-                            evt_data = evt.get("data", {})
-                            yield f"event: {evt_type}\ndata: {json.dumps({'event': evt_type, 'data': evt_data})}\n\n"
-                            await asyncio.sleep(0.01) # Small delay for smooth playback
+                            yield _fmt(evt.get("event", "info"), evt.get("data", {}))
+                            await asyncio.sleep(0.01)
                     except Exception:
                         continue
-            yield f"event: complete\ndata: {json.dumps({'event': 'complete', 'data': {'status': submission.status}})}\n\n"
+            yield _fmt("complete", {"status": submission.status})
             return
 
         # 2. Live stream for ongoing repairs
         sent_idx = 0
+        last_heartbeat = asyncio.get_event_loop().time()
         try:
             while True:
                 queue = _event_queues.get(submission_id, [])
                 while sent_idx < len(queue):
                     evt = queue[sent_idx]
-                    evt_type = evt.get("event", "info")
-                    evt_data = evt.get("data", {})
-                    yield f"event: {evt_type}\ndata: {json.dumps({'event': evt_type, 'data': evt_data})}\n\n"
+                    yield _fmt(evt.get("event", "info"), evt.get("data", {}))
                     sent_idx += 1
+                    last_heartbeat = asyncio.get_event_loop().time()  # reset heartbeat on real events
 
                 if _repair_done.get(submission_id, False) and sent_idx >= len(queue):
                     break
-                
+
                 # Check if submission finished while we were waiting
                 await db.refresh(submission)
                 if submission.status in ["success", "failed"]:
-                    # Wait a bit for the last events to hit the queue
                     await asyncio.sleep(1)
                     if sent_idx >= len(_event_queues.get(submission_id, [])):
                         break
 
+                # Send heartbeat comment every 15s to keep proxy/browser connection alive
+                now = asyncio.get_event_loop().time()
+                if now - last_heartbeat > 15:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = now
+
                 await asyncio.sleep(0.2)
         finally:
-            # Only cleanup if we were the ones running the live stream
             if submission.status not in ["success", "failed"]:
                 _event_queues.pop(submission_id, None)
                 _repair_done.pop(submission_id, None)
@@ -209,6 +217,7 @@ async def stream_repair(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
         },
     )
 
