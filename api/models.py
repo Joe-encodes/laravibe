@@ -14,7 +14,7 @@ from api.database import Base
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 def _uuid() -> str:

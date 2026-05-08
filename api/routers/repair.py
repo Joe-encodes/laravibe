@@ -52,7 +52,7 @@ async def submit_repair(
     submission = Submission(
         id=submission_id,
         user_id=_user.get("sub") if isinstance(_user, dict) else getattr(_user, "sub", str(_user)) if _user else None,
-        created_at=datetime.now(timezone.utc),
+        created_at=datetime.utcnow(),
         original_code=repair_request.code,
         user_prompt=repair_request.prompt,
         status="pending",

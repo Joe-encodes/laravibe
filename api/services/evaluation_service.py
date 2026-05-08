@@ -45,12 +45,13 @@ async def run_batch_evaluation(experiment_id: str):
             submission_id = str(uuid.uuid4())
             
             async with session_factory() as db:
-                db.add(Submission(
-                    id=submission_id, created_at=datetime.now(timezone.utc),
-                    original_code=code, status="pending",
+                submission = Submission(
+                    id=submission_id, created_at=datetime.utcnow(),
+                    original_code=code, user_prompt=case.get("prompt"), status="pending",
                     case_id=case_id, category=case.get("type", "unknown"),
                     experiment_id=experiment_id,
-                ))
+                )
+                db.add(submission)
                 await db.commit()
 
                 # Run the actual modular orchestrator loop
