@@ -51,9 +51,10 @@ echo ">>> Launching infrastructure in background..."
 # We bind to 0.0.0.0 to allow Koyeb to route traffic to the container.
 echo ">>> Launching Gunicorn..."
 exec gunicorn api.main:app \
-    --workers 2 \
+    --workers 1 \
     --worker-class uvicorn.workers.UvicornWorker \
     --bind 0.0.0.0:$PORT \
     --access-logfile - \
     --error-logfile - \
-    --timeout 300
+    --timeout 300 \
+    --keep-alive 75
