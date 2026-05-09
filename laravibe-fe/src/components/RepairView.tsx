@@ -146,13 +146,10 @@ export const RepairView: React.FC = () => {
     <div className="flex-1 flex flex-col overflow-hidden bg-surface-container-lowest">
       {/* Header HUD */}
       <div className="h-16 border-b border-machined-border bg-surface-container-high/80 backdrop-blur-md flex items-center justify-between px-6 shrink-0 relative overflow-hidden z-20 shadow-md">
-        {/* Glass Glow Accent */}
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-64 h-1 bg-primary/40 blur-[8px]"></div>
         
         <div className="flex items-center gap-4">
-          <div className="p-2 bg-surface-container-high border border-outline-variant rounded relative group">
-            <Cpu className="w-5 h-5 text-primary group-hover:animate-pulse" />
-            <div className="absolute inset-0 bg-primary/10 blur-sm rounded animate-pulse opacity-0 group-hover:opacity-100"></div>
+          <div className="p-2 bg-surface-container-high border border-outline-variant rounded relative">
+            <Cpu className="w-5 h-5 text-primary" />
           </div>
           <div>
             <h1 className="text-lg font-bold tracking-tight text-on-surface flex items-center gap-2">
@@ -172,12 +169,12 @@ export const RepairView: React.FC = () => {
                     key={s} 
                     className={cn(
                       "w-1.5 h-1.5 rounded-full transition-all duration-500",
-                      stage === s ? "bg-primary scale-150 shadow-[0_0_10px_rgba(192,193,255,1)]" : "bg-outline-variant/50"
+                      stage === s ? "bg-primary scale-150" : "bg-outline-variant/50"
                     )} 
                   />
                 ))}
               </div>
-              <span className="text-hud text-outline/80">CURRENT_STATE: <span className="text-primary flicker-text">{stage}</span></span>
+              <span className="text-hud text-outline/80">CURRENT_STATE: <span className="text-primary">{stage}</span></span>
             </div>
           </div>
         </div>
@@ -189,16 +186,7 @@ export const RepairView: React.FC = () => {
             </div>
             
             <div className="flex gap-2">
-              {!ongoing && stage === 'COMPLETE' && (
-                <button 
-                  onClick={() => window.location.reload()}
-                  className="px-4 py-2 font-mono text-[10px] font-black uppercase rounded border border-outline-variant text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-all flex items-center gap-2"
-                  title="Restream from Backend"
-                >
-                  <RotateCw className="w-3 h-3" />
-                  REPLAY
-                </button>
-              )}
+
               <button 
                 disabled={ongoing}
                 onClick={() => navigate(`/iteration/${submissionId}`)}
@@ -206,7 +194,7 @@ export const RepairView: React.FC = () => {
                   "px-6 py-2 font-mono text-[10px] font-black uppercase rounded border transition-all flex items-center gap-2",
                   ongoing 
                     ? "border-outline-variant/30 text-outline/50 cursor-wait bg-surface-container-highest/20" 
-                    : "bg-secondary/10 text-secondary border-secondary/50 hover:bg-secondary/20 hover:border-secondary active:scale-95 shadow-[0_0_15px_rgba(78,222,163,0.15)]"
+                    : "bg-secondary/10 text-secondary border-secondary/50 hover:bg-secondary/20 hover:border-secondary active:scale-95"
                 )}
               >
                 {ongoing ? <RotateCw className="w-3 h-3 animate-spin" /> : <TerminalIcon className="w-3 h-3" />}
@@ -261,7 +249,7 @@ export const RepairView: React.FC = () => {
             </AnimatePresence>
 
             {ongoing && (
-              <div className="flex gap-3 items-center opacity-40 py-2 animate-pulse">
+              <div className="flex gap-3 items-center opacity-40 py-2">
                 <div className="w-1 h-1 bg-primary rounded-full animate-bounce"></div>
                 <span className="text-sm text-on-surface-variant">Waiting for sandbox payload...</span>
               </div>
@@ -293,7 +281,7 @@ export const RepairView: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="mono text-xl font-black text-primary">{stats.mutationScore}%</span>
                 <div className="w-24 bg-surface-container-highest/50 h-1.5 rounded-full overflow-hidden shadow-inner">
-                  <div className="bg-primary h-full transition-all duration-1000 shadow-[0_0_10px_rgba(192,193,255,0.8)]" style={{ width: `${stats.mutationScore}%` }}></div>
+                  <div className="bg-primary h-full transition-all duration-1000" style={{ width: `${stats.mutationScore}%` }}></div>
                 </div>
               </div>
             </div>
@@ -302,7 +290,7 @@ export const RepairView: React.FC = () => {
               <div className="flex items-center gap-3">
                 <div className={cn(
                   "px-2.5 py-1 mono text-[11px] font-black rounded-sm border",
-                  stats.pestStatus === 'PASS' ? "bg-secondary/10 text-secondary border-secondary/30 primary-glow" : "bg-outline-variant/10 text-outline border-outline-variant/20"
+                  stats.pestStatus === 'PASS' ? "bg-secondary/10 text-secondary border-secondary/30" : "bg-outline-variant/10 text-outline border-outline-variant/20"
                 )}>
                   {stats.pestStatus}
                 </div>
@@ -312,7 +300,7 @@ export const RepairView: React.FC = () => {
             <div className="p-4 flex flex-col justify-between bg-primary/[0.02] hover:bg-primary/[0.05] transition-colors border-t-2 border-primary/20">
               <span className="text-hud text-primary/60">LATENCY_METRICS</span>
               <div className="flex items-baseline gap-1.5">
-                <span className="mono text-xl font-black text-primary flicker-text">{(stats.duration / 1000).toFixed(1)}</span>
+                <span className="mono text-xl font-black text-primary">{(stats.duration / 1000).toFixed(1)}</span>
                 <span className="text-hud text-primary/40">SEC</span>
               </div>
             </div>

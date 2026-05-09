@@ -70,8 +70,6 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
   const navLinks = [
     { path: '/', icon: Code, title: 'Analyzer workspace' },
     { path: '/repair', icon: Bug, title: 'Active repair stream', useId: true },
-    { path: '/history', icon: History, title: 'Repair history' },
-    { path: '/repairs', icon: Activity, title: 'Active nodes' },
     { path: '/reports', icon: BarChart2, title: 'Analytics reports' },
     { path: '/admin', icon: ShieldAlert, title: 'Admin dashboard', admin: true },
   ];
@@ -134,7 +132,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
           </div>
 
           {/* AI Model */}
-          <div className="flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-0.5 border border-primary/20 shrink-0">
+          <div className="flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border shrink-0">
             <Brain className="w-3 h-3 text-primary shrink-0" />
             <span className="text-hud text-primary whitespace-nowrap">
               {health?.ai
