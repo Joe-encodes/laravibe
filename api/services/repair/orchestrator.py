@@ -150,7 +150,10 @@ async def run_repair_loop(
 
             # 1b. Classify error into structured category
             # SAFETY: If logs are very short after filtering (mostly noise), force 'NONE' classification
-            if len(error_logs) < 200:
+            # BUT: Never force 'NONE' if there was a timeout or system error!
+            is_infra_error = any(x in error_logs for x in ["[TIMEOUT]", "[CRASH]", "[SYSTEM_ERROR]", "[CANCELLED]"])
+            
+            if len(error_logs) < 200 and not is_infra_error:
                 from api.services.error_classifier import ClassifiedError
                 classified_error = ClassifiedError(category="none", summary="Clear", details={}, full_trace="")
             else:
@@ -163,7 +166,7 @@ async def run_repair_loop(
             yield _log_event("log_line", {"msg": f"Error classified: {classified_error.category}"})
 
             # --- SUCCESS EXIT: If code is correct (either initially or after a patch) ---
-            if classified_error.category == "none":
+            if classified_error.category == "none" and not is_infra_error:
                 submission.status = "success"
                 # Wait for any background writes to settle
                 await asyncio.sleep(2)
@@ -175,6 +178,20 @@ async def run_repair_loop(
                     diagnosis = "Code verified healthy"
                     fix_description = "Initial code was correct or successfully patched"
                 await context.store_repair_success(db, error_logs, locals().get('ai_resp', MockResp()), iteration_num)
+                
+                # PERSIST: Even on early success, we MUST log an iteration record so History isn't empty!
+                db.add(Iteration(
+                    submission_id=submission_id,
+                    iteration_num=iteration_num,
+                    code_input=code,
+                    execution_output=raw_error,
+                    error_logs=error_logs,
+                    status="success",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    ai_response="Initial verification: SUCCESS",
+                    pm_category="none",
+                    pipeline_logs=_safe_json_dumps(iteration_events)
+                ))
                 
                 submission.total_iterations = iteration_num
                 await db.commit()

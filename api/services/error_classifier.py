@@ -53,6 +53,22 @@ def classify_error(error_logs: str) -> ClassifiedError:
     # Lowercase for case-insensitive matching
     logs_lower = error_logs.lower()
 
+    # ── INFRASTRUCTURE ERRORS (Priority 0) ────────────────────────────────────
+    if "[TIMEOUT]" in error_logs:
+        return ClassifiedError(
+            category="TIMEOUT",
+            summary="Command execution timed out in sandbox",
+            details={"type": "timeout", "limit": "5s-15s"},
+            full_trace=error_logs
+        )
+    if any(x in error_logs for x in ["[CRASH]", "[SYSTEM_ERROR]", "[CANCELLED]"]):
+        return ClassifiedError(
+            category="INFRA_ERROR",
+            summary="Sandbox infrastructure failure or cancellation",
+            details={"type": "infra_failure"},
+            full_trace=error_logs
+        )
+
     # ── CLASS REDECLARATION (Priority 1) ──────────────────────────────────────
     if "already in use" in logs_lower or "cannot declare class" in logs_lower:
         # Improved regex to handle 'App\Models\User' followed by a comma or space

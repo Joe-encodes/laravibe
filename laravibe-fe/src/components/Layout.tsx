@@ -264,7 +264,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
         <div className="flex items-center gap-3 text-sm shrink-0 self-start md:self-auto w-full md:w-auto justify-between md:justify-end">
           <div className="flex items-center">
             {submissionId && (
-              <span className="text-hud text-outline mr-4">NODE: <span className="text-primary flicker-text">{submissionId.substring(0, 8)}</span></span>
+              <span className="text-hud text-outline mr-4">NODE: <span className="text-primary uppercase font-bold">{submissionId.substring(0, 8)}</span></span>
             )}
             <span className="text-hud text-machined-text-dim">
               {

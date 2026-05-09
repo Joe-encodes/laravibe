@@ -23,7 +23,7 @@ class ClassInfo:
 async def detect_class_info(container) -> ClassInfo:
     """Detect namespace and classname from /var/www/sandbox/submitted_code.php."""
     # Pre-lint to ensure valid detection
-    await docker.execute(container, "php -l /var/www/sandbox/submitted_code.php", timeout=5)
+    await docker.execute(container, "php -l /var/www/sandbox/submitted_code.php", timeout=10)
 
     ns_cmd = "php -r '$c=@file_get_contents(\"/var/www/sandbox/submitted_code.php\"); if(preg_match(\"/namespace\\s+([^;\\s]+)/\",$c,$m)) echo trim($m[1]);'"
     cls_cmd = "php -r '$c=@file_get_contents(\"/var/www/sandbox/submitted_code.php\"); if(preg_match(\"/class\\s+(\\w+)/\",$c,$m)) echo $m[1];'"
@@ -134,7 +134,7 @@ async def execute_code(container, code: str) -> dict:
     res = await docker.execute(
         container, 
         f"cd /var/www/sandbox && php artisan tinker --execute=\"$(echo {b64_code} | base64 -d)\"", 
-        timeout=15
+        timeout=25
     )
     
     return {

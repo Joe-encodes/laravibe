@@ -44,7 +44,7 @@ export const CodeSynthesisPanel: React.FC<CodeSynthesisPanelProps> = ({
       <div className="flex-1 overflow-auto bg-surface-container-lowest/80 p-0 custom-scrollbar relative scanlines">
         {!code ? (
           <div className="h-full flex flex-col items-center justify-center text-center opacity-30 px-6">
-            <Zap className="w-12 h-12 mb-4 stroke-[1px] text-primary flicker-text" />
+            <Zap className="w-12 h-12 mb-4 stroke-[1px] text-primary" />
             <p className="text-hud text-on-surface-variant">AWAITING_LOGIC_SYNTHESIS...</p>
           </div>
         ) : (
@@ -75,7 +75,7 @@ export const CodeSynthesisPanel: React.FC<CodeSynthesisPanelProps> = ({
                     )}
                   >
                     {isPatched && (
-                      <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-secondary shadow-[0_0_8px_rgba(78,222,163,1)] flicker-text"></span>
+                      <span className="absolute left-0 top-0 bottom-0 w-[2px] bg-secondary shadow-[0_0_8px_rgba(78,222,163,1)]"></span>
                     )}
                     {line || ' '}
                   </div>
