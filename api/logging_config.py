@@ -64,13 +64,18 @@ def setup_logging(debug: bool = False):
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.DEBUG if debug else logging.INFO)
     
+    # Silence noisy libraries that clutter the terminal (the "trash")
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("sqlalchemy").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    
     # Clear existing handlers to prevent duplicates
     root_logger.handlers = []
     root_logger.addHandler(console_handler)
     root_logger.addHandler(file_handler)
 
-    # Note: In cloud environments (Koyeb/Heroku), the console_handler (stdout)
-    # is the primary way to view logs in the web dashboard.
     logging.info(f"Logging initialized in {'DEBUG' if debug else 'INFO'} mode.")
     if debug:
         logging.info(f"File logging: {log_file}")

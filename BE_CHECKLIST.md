@@ -116,6 +116,7 @@
 - [x] ✅ `create_file` mutation override: 0% accepted as success when prev action = `create_file`
 - [x] ✅ Exhausted: reaches `MAX_ITERATIONS` without success
 - [x] ✅ AI failure: `AIServiceError` after all fallbacks exhausted → immediate fail
+- [x] ✅ **Infrastructure hardening**: Handled `TIMEOUT` (exit code 124) and `INFRA_ERROR` explicitly to prevent early exit loops.
 
 ---
 

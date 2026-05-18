@@ -10,7 +10,6 @@ import { TestsView } from './components/TestsView';
 import { ShortcutsModal } from './components/ShortcutsModal';
 import { AdminDashboardView } from './components/AdminDashboardView';
 import { LoginView } from './components/LoginView';
-import { RepairsListView } from './components/RepairsListView';
 import { ReportsView } from './components/ReportsView';
 
 /**
@@ -93,7 +92,7 @@ export default function App() {
             <Route path="/iteration/:submissionId" element={<IterationView />} />
             <Route path="/tests/:submissionId" element={<TestsView />} />
             <Route path="/admin" element={<AdminDashboardView />} />
-            <Route path="/repairs" element={<RepairsListView />} />
+            <Route path="/repairs" element={<Navigate to="/history" replace />} />
             <Route path="/reports" element={<ReportsView />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

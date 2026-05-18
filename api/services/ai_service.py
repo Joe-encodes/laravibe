@@ -742,7 +742,12 @@ async def get_plan(
     )
     raw, model_used = await _call_role_pool(prompt, PLANNER_POOL, "Planner", json_mode=True)
     data = _parse_json_safe(raw)
-    logger.info(f"[Planner] {data.get('error_classification')} confidence={data.get('plan_confidence')}")
+    
+    classification = data.get('error_classification', 'unknown')
+    confidence = data.get('plan_confidence', 0)
+    logger.info(f"[Planner] Classification: {classification} (Conf: {confidence})")
+    logger.info(f"[Planner] Strategy: {data.get('root_cause', 'No analysis provided.')[:200]}...")
+    
     return PlanResult(raw=raw, data=data, model_used=model_used)
 
 
@@ -812,7 +817,13 @@ async def execute_plan(
     resp = _parse_xml_response(raw)
     resp.prompt     = prompt
     resp.model_used = model_used
-    logger.info(f"[Executor] {len(resp.patches)} patch(es) via {model_used}")
+    
+    # Thesis-Critical Logging: Ensure Diagnosis and Patches are visible at INFO level
+    logger.info(f"[Executor] Model: {model_used}")
+    logger.info(f"[Executor] Diagnosis: {resp.diagnosis[:500]}...")
+    for i, p in enumerate(resp.patches):
+        logger.info(f"[Executor] Patch #{i+1}: {p.action} -> {p.filename}")
+    
     return ExecuteResult(response=resp, model_used=model_used)
 
 

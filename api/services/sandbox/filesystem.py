@@ -31,6 +31,10 @@ def prepare_pest_test(test_code: str, target_fqcn: str) -> str:
     """Inject required imports and covers() directive into a Pest test."""
     if not test_code: return ""
     
+    # Ensure <?php is present for search/replace to work
+    if not test_code.strip().startswith("<?php"):
+        test_code = "<?php\n\n" + test_code.strip()
+
     # Auto-inject covers if missing
     if "covers(" not in test_code:
         fqcn = target_fqcn if target_fqcn.startswith("\\") else "\\" + target_fqcn

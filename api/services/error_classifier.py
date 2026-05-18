@@ -17,8 +17,11 @@ Categories:
   - UNKNOWN: Couldn't classify
 """
 import re
+import logging
 from dataclasses import dataclass
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -35,9 +38,9 @@ def classify_error(error_logs: str) -> ClassifiedError:
     Classify a raw error log into a structured error type.
     Returns ClassifiedError with category and extracted details.
     """
-    print(f"DEBUG: classify_error input: '{error_logs}' (len={len(error_logs)})")
+    logger.debug(f"classify_error input: '{error_logs}' (len={len(error_logs)})")
     if not error_logs or not error_logs.strip():
-        print("DEBUG: Returning NONE")
+        logger.debug("Returning NONE")
         return ClassifiedError(
             category="NONE",
             summary="No errors detected during discovery.",

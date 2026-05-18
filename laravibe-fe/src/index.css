@@ -103,7 +103,7 @@
   --color-machined-footer: #f1f5f9;
   --color-machined-border: #cbd5e1;
   --color-machined-text-dim: #1e293b; /* Slate 800 */
-  --color-scanlines: rgba(0, 0, 0, 0.04);
+  --color-scanlines: transparent;
 }
 
 @layer base {

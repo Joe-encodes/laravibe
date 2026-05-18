@@ -14,7 +14,9 @@ import {
   LogOut,
   Brain,
   Activity,
-  BarChart2
+  BarChart2,
+  Server,
+  Database
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { cn } from '../lib/utils';
@@ -62,29 +64,38 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
     };
     checkHealth();
     
-    // Poll every 30 seconds
-    const interval = setInterval(checkHealth, 30000);
+    // Poll every 10 seconds
+    const interval = setInterval(checkHealth, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  const StatusItem = ({ icon: Icon, label, status, color }: { icon: any, label: string, status: string, color: string }) => (
+    <div className="flex items-center gap-2 group cursor-help" title={`${label}: ${status}`}>
+      <Icon className={cn("w-3.5 h-3.5", color)} />
+      <div className="flex flex-col">
+        <span className="text-[8px] font-bold text-outline/60 uppercase leading-none mb-0.5">{label}</span>
+        <span className={cn("text-[9px] font-black uppercase leading-none tracking-tighter", color)}>{status}</span>
+      </div>
+    </div>
+  );
 
   const navLinks = [
     { path: '/', icon: Code, title: 'Analyzer workspace' },
     { path: '/repair', icon: Bug, title: 'Active repair stream', useId: true },
+    { path: '/history', icon: History, title: 'Operational archives' },
     { path: '/reports', icon: BarChart2, title: 'Analytics reports' },
     { path: '/admin', icon: ShieldAlert, title: 'Admin dashboard', admin: true },
   ];
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-surface-container-lowest text-on-surface transition-colors duration-300">
+    <div className="h-screen flex flex-col overflow-hidden bg-surface-container-lowest text-on-surface transition-colors duration-300 font-sans">
       {/* TopAppBar */}
-      <header className="bg-machined-header flex justify-between items-center w-full px-4 h-14 border-b border-machined-border font-sans z-50 shrink-0">
+      <header className="bg-machined-header flex justify-between items-center w-full px-4 h-14 border-b border-machined-border z-50 shrink-0">
         <div className="flex items-center gap-3">
           {/* Brand Logo */}
-          <div className="flex items-center gap-1.5 group select-none">
-            {/* Terminal prompt decoration */}
+          <div className="flex items-center gap-1.5 group select-none cursor-pointer" onClick={() => navigate('/')}>
             <span className="text-secondary text-sm font-black opacity-60 group-hover:opacity-100 transition-opacity">&gt;_</span>
             <span className="relative">
-              {/* Glowing background blur */}
               <span className="absolute inset-0 blur-md bg-primary/20 rounded pointer-events-none" />
               <span
                 className="relative font-black text-base tracking-[0.15em] uppercase"
@@ -100,56 +111,63 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
                 LARAVIBE
               </span>
             </span>
-            {/* Blinking cursor */}
             <span className="text-primary font-black text-base animate-pulse leading-none">█</span>
           </div>
-          <span className="text-hud text-machined-text-dim border border-machined-border px-1.5 py-0.5 hidden sm:inline-block">v1.0</span>
+          <span className="text-[10px] font-bold text-machined-text-dim border border-machined-border px-1.5 py-0.5 rounded-sm">V1.0</span>
         </div>
         
-        <div className="flex items-center gap-1.5 md:gap-2 overflow-x-auto no-scrollbar">
-          {/* API Status */}
-          <div className="hidden sm:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
-            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.status === 'ok' ? "bg-secondary primary-glow" : "bg-error")} />
-            <span className={cn("text-hud whitespace-nowrap", health?.status === 'ok' ? "text-secondary" : "text-error")}>
-              {health?.status === 'ok' ? 'API_OK' : 'API_OFFLINE'}
-            </span>
+        <div className="flex items-center gap-2">
+          {/* Unified Machined HUD Block */}
+          <div className="flex items-center bg-surface-container-high/40 dark:bg-machined-sidebar/40 border border-machined-border rounded-lg p-1 backdrop-blur-md shadow-lg">
+            <div className="flex items-center gap-4 px-3 py-1 border-r border-machined-border/50">
+              <StatusItem 
+                icon={Server} 
+                label="SANDBOX" 
+                status={health?.docker === 'connected' ? 'ACTIVE' : 'OFFLINE'} 
+                color={health?.docker === 'connected' ? 'text-secondary' : 'text-error'} 
+              />
+              <div className="w-[1px] h-5 bg-machined-border/30"></div>
+              <StatusItem 
+                icon={Activity} 
+                label="ORCHESTRATOR" 
+                status={health?.status === 'ok' ? 'READY' : 'WAITING'} 
+                color={health?.status === 'ok' ? 'text-primary' : 'text-outline'} 
+              />
+              <div className="w-[1px] h-5 bg-machined-border/30"></div>
+              <StatusItem 
+                icon={Database} 
+                label="SYSTEM_DB" 
+                status={health?.db === 'connected' ? 'LINKED' : 'OFFLINE'} 
+                color={health?.db === 'connected' ? 'text-secondary' : 'text-error'} 
+              />
+            </div>
+            
+            <div className="flex items-center gap-2 pl-3 pr-2">
+              <button
+                onClick={onThemeToggle}
+                className="p-1.5 hover:bg-surface-container-highest/50 rounded-md transition-all text-machined-text-dim hover:text-on-surface"
+                title="Toggle Theme"
+              >
+                {theme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              </button>
+              
+              <div className="w-[1px] h-5 bg-machined-border/30"></div>
+              
+              <div className="flex items-center gap-2.5 px-1.5">
+                <div className="flex flex-col items-end">
+                  <span className="text-[7px] font-black text-outline/60 uppercase tracking-widest leading-none mb-0.5">AUTH_LVL</span>
+                  <span className="text-[9px] font-mono text-on-surface font-black tracking-tighter leading-none">MASTER_ADM</span>
+                </div>
+                <button 
+                  onClick={onSignOut}
+                  className="p-1.5 hover:bg-error/10 hover:text-error rounded-md transition-all text-machined-text-dim"
+                  title="Sign Out"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
           </div>
-
-          {/* Docker Status */}
-          <div className="hidden md:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
-            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.docker === 'connected' ? "bg-indigo-400" : "bg-error")} />
-            <span className={cn("text-hud whitespace-nowrap", health?.docker === 'connected' ? "text-indigo-400" : "text-error")}>
-              DOCKER_{health?.docker === 'connected' ? 'ON' : 'OFF'}
-            </span>
-          </div>
-          
-          {/* DB Status */}
-          <div className="hidden lg:flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border">
-            <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", health?.db === 'connected' ? "bg-emerald-400" : "bg-error")} />
-            <span className={cn("text-hud whitespace-nowrap", health?.db === 'connected' ? "text-emerald-400" : "text-error")}>
-              DB_{health?.db === 'connected' ? 'OK' : 'OFF'}
-            </span>
-          </div>
-
-          {/* AI Model */}
-          <div className="flex items-center gap-1.5 rounded-full bg-machined-header/70 px-2.5 py-0.5 border border-machined-border shrink-0">
-            <Brain className="w-3 h-3 text-primary shrink-0" />
-            <span className="text-hud text-primary whitespace-nowrap">
-              {health?.ai
-                ? health.ai.split(':')[0].trim().toUpperCase()
-                : 'AI...'}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0 ml-2">
-          <button 
-            onClick={onSignOut}
-            className="p-2 text-machined-text-dim hover:text-error hover:bg-error/10 transition-all rounded-lg"
-            title="Sign Out"
-          >
-            <LogOut className="w-5 h-5" />
-          </button>
         </div>
       </header>
 
@@ -162,11 +180,8 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               const path = link.useId ? (submissionId ? `/repair/${submissionId}` : '/') : link.path;
               return (
                 <div key={i} className="relative group">
-                  {/* Glowing active rail indicator */}
                   {active && (
-                    <div 
-                      className="absolute -left-4 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full shadow-[0_0_10px_rgba(192,193,255,0.8)] animate-pulse"
-                    />
+                    <div className="absolute -left-4 top-1/2 -translate-y-1/2 w-1 h-6 bg-primary rounded-r-full shadow-[0_0_10px_rgba(192,193,255,0.8)] animate-pulse" />
                   )}
                   <button 
                     onClick={() => navigate(path)}
@@ -182,27 +197,6 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
               )
             })}
           </nav>
-          <div className="mt-auto flex flex-col gap-4 w-full items-center px-1 pb-2">
-            <button 
-              onClick={onThemeToggle}
-              title={theme === 'dark' ? "Switch to Light Mode" : "Switch to Dark Mode"}
-              className="w-10 h-10 flex items-center justify-center text-machined-text-dim hover:text-on-surface transition-all active:scale-95"
-            >
-              {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-            </button>
-            <button 
-              onClick={() => navigate('/')}
-              title="Start new repair session"
-              className={cn(
-                "w-full py-3 text-sm font-medium rounded-md transition-all active:scale-95 border text-center flex items-center justify-center",
-                isPathActive('/') && location.pathname === '/' 
-                  ? "bg-primary text-on-primary border-primary shadow-[0_0_15px_rgba(99,102,241,0.3)]" 
-                  : "bg-primary-container text-on-primary-container border-outline-variant hover:brightness-105"
-              )}
-            >
-              <Code className="w-5 h-5" />
-            </button>
-          </div>
         </aside>
 
         {/* Main Content */}
@@ -211,86 +205,58 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
         </main>
       </div>
 
-      {/* Footer (Logs/Diff/Tests) */}
-      <footer className="h-auto min-h-[3rem] py-2 md:py-0 md:h-12 bg-machined-footer border-t border-machined-border flex flex-col md:flex-row justify-between items-center px-4 z-50 shrink-0 gap-2 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-4 w-full md:w-auto shrink-0">
+      {/* Footer */}
+      <footer className="h-12 bg-machined-footer border-t border-machined-border flex justify-between items-center px-4 z-50 shrink-0">
+        <div className="flex items-center gap-3">
           <button 
-            onClick={() => navigate('/history')}
+            onClick={() => submissionId && navigate(`/repair/${submissionId}`)}
             className={cn(
-              "flex items-center gap-2 rounded-md px-3 py-2 transition-all shrink-0",
-              isPathActive('/history') ? "bg-surface-container text-on-surface" : "text-machined-text-dim hover:bg-surface-container/70 hover:text-on-surface"
+              "flex items-center gap-2 rounded-md px-3 py-1.5 transition-all border border-transparent hover:border-outline-variant/30",
+              submissionId ? (isPathActive('/repair') ? "bg-surface-container text-on-surface shadow-sm" : "text-machined-text-dim hover:bg-surface-container/70") : "opacity-30 cursor-not-allowed"
             )}
+            disabled={!submissionId}
           >
-            <History className="w-4 h-4 text-emerald-400" />
-            <span className="text-hud text-on-surface-variant hidden sm:inline-block">HISTORY</span>
+            <List className="w-4 h-4" />
+            <span className="text-[10px] font-black tracking-widest uppercase">Logs</span>
           </button>
-          <div className="h-4 w-px bg-machined-border" />
-          <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-            <button 
-              onClick={() => submissionId && navigate(`/repair/${submissionId}`)}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-2 transition-all shrink-0",
-                submissionId ? (isPathActive('/repair') ? "bg-surface-container text-on-surface" : "text-machined-text-dim hover:bg-surface-container/70 hover:text-on-surface") : "opacity-30 cursor-not-allowed"
-              )}
-              disabled={!submissionId}
-            >
-              <List className="w-4 h-4" />
-              <span className="text-hud text-on-surface-variant hidden sm:inline-block">LOGS</span>
-            </button>
-            <button 
-              onClick={() => submissionId && navigate(`/iteration/${submissionId}`)}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-2 transition-all shrink-0",
-                submissionId ? (isPathActive('/iteration') ? "bg-surface-container text-on-surface" : "text-machined-text-dim hover:bg-surface-container/70 hover:text-on-surface") : "opacity-30 cursor-not-allowed"
-              )}
-              disabled={!submissionId}
-            >
-              <Diff className="w-4 h-4" />
-              <span className="text-hud text-on-surface-variant hidden sm:inline-block">DIFF</span>
-            </button>
-            <button 
-              onClick={() => submissionId && navigate(`/tests/${submissionId}`)}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-3 py-2 transition-all shrink-0",
-                submissionId ? (isPathActive('/tests') ? "bg-surface-container text-on-surface" : "text-machined-text-dim hover:bg-surface-container/70 hover:text-on-surface") : "opacity-30 cursor-not-allowed"
-              )}
-              disabled={!submissionId}
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              <span className="text-hud text-on-surface-variant hidden sm:inline-block">TESTS</span>
-            </button>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 text-sm shrink-0 self-start md:self-auto w-full md:w-auto justify-between md:justify-end">
-          <div className="flex items-center">
-            {submissionId && (
-              <span className="text-hud text-outline mr-4">NODE: <span className="text-primary uppercase font-bold">{submissionId.substring(0, 8)}</span></span>
+          <button 
+            onClick={() => submissionId && navigate(`/iteration/${submissionId}`)}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-3 py-1.5 transition-all border border-transparent hover:border-outline-variant/30",
+              submissionId ? (isPathActive('/iteration') ? "bg-surface-container text-on-surface shadow-sm" : "text-machined-text-dim hover:bg-surface-container/70") : "opacity-30 cursor-not-allowed"
             )}
-            <span className="text-hud text-machined-text-dim">
-              {
-                // Only show REPAIR_SEQUENCE_ACTIVE if we are actually on the repair page with a live submission
-                isPathActive('/repair') && submissionId ? 'REPAIR_SEQUENCE_ACTIVE' : 
-                location.pathname === '/' ? 'AWAITING_INPUT' :
-                (isPathActive('/history') || isPathActive('/iteration') || isPathActive('/tests')) ? 'AUDIT_MODE' :
-                isPathActive('/reports') ? 'ANALYTICS_MODE' :
-                isPathActive('/repairs') ? 'NODE_MONITOR' :
-                'IDLE'
-              }
+            disabled={!submissionId}
+          >
+            <Diff className="w-4 h-4" />
+            <span className="text-[10px] font-black tracking-widest uppercase">Diff</span>
+          </button>
+          <button 
+            onClick={() => submissionId && navigate(`/tests/${submissionId}`)}
+            className={cn(
+              "flex items-center gap-2 rounded-md px-3 py-1.5 transition-all border border-transparent hover:border-outline-variant/30",
+              submissionId ? (isPathActive('/tests') ? "bg-surface-container text-on-surface shadow-sm" : "text-machined-text-dim hover:bg-surface-container/70") : "opacity-30 cursor-not-allowed"
+            )}
+            disabled={!submissionId}
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            <span className="text-[10px] font-black tracking-widest uppercase">Tests</span>
+          </button>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {submissionId && (
+            <span className="text-[10px] font-black text-outline/50 uppercase tracking-widest">
+              Node: <span className="text-primary">{submissionId.substring(0, 8)}</span>
             </span>
-          </div>
-          {isPathActive('/repair') && (
-            <button 
-              onClick={() => navigate('/')}
-              className="ml-2 px-3 py-1 bg-error/15 text-error border border-error/30 rounded-md text-[11px] font-semibold hover:bg-error/25 transition-all"
-            >
-              Cancel
-            </button>
           )}
+          <span className="text-[10px] font-black text-machined-text-dim/40 tracking-[0.2em] uppercase">
+            {isPathActive('/repair') ? 'Repair_Stream' : location.pathname === '/' ? 'Idle' : 'Audit'}
+          </span>
         </div>
       </footer>
 
       {/* Mobile NavBar */}
-      <nav className="md:hidden flex items-center justify-around bg-machined-sidebar border-t border-machined-border h-14 shrink-0 px-2 overflow-x-auto no-scrollbar gap-2 z-50">
+      <nav className="md:hidden flex items-center justify-around bg-machined-sidebar border-t border-machined-border h-14 shrink-0 px-2 z-50">
         {navLinks.map((link, i) => {
           const active = isPathActive(link.path);
           const path = link.useId ? (submissionId ? `/repair/${submissionId}` : '/') : link.path;
@@ -298,23 +264,15 @@ export const Layout: React.FC<LayoutProps> = ({ children, theme, onThemeToggle, 
             <button 
               key={i}
               onClick={() => navigate(path)}
-              title={link.title}
               className={cn(
-                "w-10 h-10 shrink-0 flex items-center justify-center rounded-xl transition-all duration-150",
-                active ? (link.admin ? "text-error bg-surface-container border border-error/20 shadow-sm" : "text-indigo-400 bg-surface-container border border-indigo-400/20 shadow-sm") : (link.admin ? "text-machined-text-dim hover:text-error hover:bg-surface-container/80" : "text-machined-text-dim hover:text-on-surface hover:bg-surface-container/80")
+                "w-10 h-10 flex items-center justify-center rounded-xl transition-all",
+                active ? "text-primary bg-surface-container border border-primary/20" : "text-machined-text-dim"
               )}
             >
               <link.icon className="w-5 h-5" />
             </button>
           )
         })}
-        <button 
-          onClick={onThemeToggle}
-          title="Toggle Theme"
-          className="w-10 h-10 shrink-0 flex items-center justify-center text-machined-text-dim hover:text-on-surface transition-all active:scale-95 ml-auto"
-        >
-          {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-        </button>
       </nav>
     </div>
   );

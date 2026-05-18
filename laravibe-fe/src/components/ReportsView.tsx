@@ -35,7 +35,7 @@ export const ReportsView: React.FC = () => {
   const maxTrend = mutationTrend.length > 0 ? Math.max(...mutationTrend.map(t => t.score)) : 100;
 
   return (
-    <div className="flex-1 bg-surface-container-lowest p-4 md:p-8 overflow-hidden flex flex-col relative">
+    <div className="flex-1 bg-surface-container-lowest p-6 overflow-hidden flex flex-col relative">
       <div className="absolute top-0 left-0 w-full h-1/3 bg-gradient-to-b from-primary/5 to-transparent pointer-events-none"></div>
       
       <div className="max-w-6xl mx-auto h-full flex flex-col relative z-10 w-full">
@@ -46,10 +46,10 @@ export const ReportsView: React.FC = () => {
               <BarChart2 className="w-4 h-4 text-primary" />
               <span className="text-hud text-primary">ANALYTICS_ENGINE</span>
             </div>
-            <h1 className="font-mono text-3xl md:text-4xl font-black tracking-tighter text-on-surface uppercase italic">
+            <h1 className="font-mono text-3xl font-black tracking-tighter text-on-surface uppercase italic">
               Research_Reports
             </h1>
-            <p className="text-on-surface-variant text-log max-w-2xl opacity-70">
+            <p className="text-on-surface-variant text-sm max-w-2xl opacity-70">
               Deep analysis of evaluation runs, thesis research metadata, and distillation metrics.
             </p>
           </div>

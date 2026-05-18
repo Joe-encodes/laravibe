@@ -143,6 +143,10 @@ async def stream_repair(
     SSE endpoint — streams live repair events.
     Connect with: new EventSource('/api/repair/<id>/stream?token=<token>')
     """
+    # Set context for logging
+    from api.logging_config import set_submission_id
+    set_submission_id(submission_id)
+
     submission = await db.get(Submission, submission_id)
     if not submission:
         raise HTTPException(404, f"Submission {submission_id} not found")
@@ -153,9 +157,13 @@ async def stream_repair(
 
         # Tell the browser to reconnect after 5s if connection drops
         yield "retry: 5000\n\n"
+        
+        is_replay = submission.status in ["success", "failed"]
 
         def _fmt(evt_type: str, evt_data: dict) -> str:
             """Format as plain SSE `data:` line (no named event) so EventSource.onmessage fires."""
+            if is_replay:
+                evt_data["history_replay"] = True
             return f"data: {json.dumps({'event': evt_type, 'data': evt_data})}\n\n"
         
         # 1. If submission is already finished, playback from DB
@@ -192,7 +200,12 @@ async def stream_repair(
                     break
 
                 # Check if submission finished while we were waiting
-                await db.refresh(submission)
+                try:
+                    await db.refresh(submission)
+                except Exception:
+                    # Session might be stale or closed, try to continue without refresh if we can
+                    pass
+
                 if submission.status in ["success", "failed"]:
                     await asyncio.sleep(1)
                     if sent_idx >= len(_event_queues.get(submission_id, [])):

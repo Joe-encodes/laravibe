@@ -21,15 +21,18 @@ export const RepairsListView: React.FC = () => {
       if (!res.ok) throw new Error('API Error');
       const data = await res.json();
       
-      const mapped = data.map((sub: any) => ({
+      // STRICT FILTERING: Only show nodes that are currently 'running'
+      // This gives the "Active Nodes" view a separate job from the "History" view.
+      const activeData = data.filter((sub: any) => sub.status === 'running');
+      
+      const mapped = activeData.map((sub: any) => ({
         id: sub.id,
         title: `Repair Node #${sub.id.substring(0, 8)}`,
         iterations: sub.total_iterations,
-        status: sub.status === 'success' ? 'COMMITTED' : (sub.status === 'running' ? 'ACTIVE' : 'FAILED'),
+        status: 'ACTIVE',
         date: new Date(sub.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         category: sub.category || 'SYSTEM_REPAIR',
       }));
-      // In a real scenario, this would filter by 'running' or 'pending'
       setActiveRepairs(mapped);
     } catch (err) {
       console.error('Failed to load active repairs:', err);

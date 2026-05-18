@@ -94,14 +94,14 @@ export const CodeSynthesisPanel: React.FC<CodeSynthesisPanelProps> = ({
                 initial={{ opacity: 0, x: 20, scale: 0.9 }}
                 animate={{ opacity: 1, x: 0, scale: 1 }}
                 exit={{ opacity: 0, x: 20, scale: 0.9 }}
-                className="glass-panel p-3 rounded-md max-w-[220px] border-l-2 border-l-primary pointer-events-auto"
+                className="bg-surface-container-high/95 dark:bg-surface-container-high/90 backdrop-blur-xl p-3 rounded-lg border border-primary/20 dark:border-machined-border shadow-2xl max-w-[220px] pointer-events-auto"
               >
                 <div className="flex items-center gap-2 mb-1.5">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div>
-                  <span className="text-hud text-primary truncate">{patch.path}</span>
+                  <div className="w-1.5 h-1.5 rounded-full bg-secondary shadow-[0_0_8px_rgba(78,222,163,0.5)]"></div>
+                  <span className="text-[10px] font-bold text-secondary uppercase tracking-wider truncate">{patch.action}</span>
                 </div>
-                <div className="text-[9px] text-on-surface-variant mono truncate opacity-70">
-                  ACTION: <span className="text-secondary">{patch.action}</span>
+                <div className="text-[11px] text-on-surface font-mono break-all leading-tight font-semibold">
+                  {patch.path}
                 </div>
               </motion.div>
             ))}
@@ -117,26 +117,24 @@ export const CodeSynthesisPanel: React.FC<CodeSynthesisPanelProps> = ({
         >
           <button 
             onClick={onDownload}
-            className="flex-1 flex items-center justify-center gap-2 bg-primary/10 text-primary border border-primary/50 py-2.5 rounded-md text-hud hover:bg-primary hover:text-on-primary active:scale-95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.15)] group"
+            className="flex-1 flex items-center justify-center gap-2 bg-primary text-on-primary border border-primary py-2.5 rounded-md text-hud hover:brightness-110 active:scale-95 transition-all shadow-[0_0_15px_rgba(192,193,255,0.25)] group"
           >
             <Download className="w-4 h-4 group-hover:-translate-y-0.5 transition-transform" />
             DIRECT_EXPORT
           </button>
           <button 
-            className="px-4 flex items-center justify-center bg-surface-container-highest/50 border border-outline-variant/50 rounded-md hover:border-secondary hover:text-secondary hover:bg-secondary/10 transition-all group"
+            className="px-3 flex items-center justify-center gap-2 bg-surface-container-highest/50 border border-outline-variant/50 rounded-md hover:border-secondary hover:text-secondary hover:bg-secondary/10 transition-all group"
             title="Apply to Sandbox"
           >
             <Zap className="w-4 h-4 text-outline group-hover:text-secondary transition-colors" />
+            <span className="text-[10px] font-bold text-outline group-hover:text-secondary whitespace-nowrap">APPLY_TO_SANDBOX</span>
           </button>
         </motion.div>
       )}
 
-      <div className="h-10 px-6 flex items-center justify-between bg-machined-footer border-t border-machined-border shrink-0 relative z-10">
-        <span className="text-hud text-outline/60">SYNTAX: PHP_LARAVEL</span>
-        <div className="flex items-center gap-2">
-          <div className="w-1.5 h-1.5 rounded-full bg-secondary primary-glow"></div>
-          <span className="text-hud text-secondary">KERNEL_LINKED</span>
-        </div>
+      <div className="h-6 px-4 flex items-center justify-between bg-machined-footer border-t border-machined-border shrink-0 relative z-10 opacity-30">
+        <span className="text-[8px] font-bold tracking-widest text-outline">AUTO_PATCH_ACTIVE</span>
+        <div className="w-1 h-1 rounded-full bg-secondary"></div>
       </div>
     </section>
   );

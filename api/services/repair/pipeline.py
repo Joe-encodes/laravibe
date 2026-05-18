@@ -14,29 +14,44 @@ async def run_pipeline(code, error, boost, prev, past, prompt, escalation_ctx, p
     planner_model = "skipped"
     verifier_model = "skipped"
 
+    # post_mortem is passed as a plain text string (current_post_mortem from orchestrator).
+    # It is NOT a PostMortemResult object. Parse it safely.
+    pm_strategy = ""
+    pm_category = ""
+    if post_mortem and isinstance(post_mortem, str):
+        # Extract category/strategy lines if present (e.g. "Analysis: ...\nStrategy: ...")
+        for line in post_mortem.splitlines():
+            if line.lower().startswith("strategy:"):
+                pm_strategy = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("category:"):
+                pm_category = line.split(":", 1)[1].strip()
+        if not pm_strategy:
+            pm_strategy = post_mortem  # use entire string as strategy fallback
+
     # --- FAST-REFINE SHORTCUT ---
     # Only use Fast-Refine if the PREVIOUS iteration wasn't also a Fast-Refine that failed.
-    # We check if the strategy is repeating to avoid infinite loops.
     is_repeated_strategy = False
-    if post_mortem and prev:
+    if pm_strategy and prev:
         last_strategy = prev[-1].get("pm_strategy", "") if prev else ""
-        if post_mortem.strategy == last_strategy:
+        if pm_strategy == last_strategy:
             is_repeated_strategy = True
 
+    # Simple refinement: skip Planner/Verifier for known quick fixes
+    FAST_REFINE_CATEGORIES = {"syntax", "dependency", "missing_import"}
     is_simple_refinement = (
         iteration_num > 1 and 
-        post_mortem and 
-        post_mortem.category in ["syntax", "dependency", "missing_import"] and
+        bool(pm_strategy) and
+        pm_category in FAST_REFINE_CATEGORIES and
         not is_repeated_strategy
     )
     
     if is_simple_refinement:
-        yield "log_line", {"msg": f"⚡ Fast-Refine Mode engaged for {post_mortem.category}. Skipping Planner/Verifier."}
+        yield "log_line", {"msg": f"⚡ Fast-Refine Mode engaged for '{pm_category}'. Skipping Planner/Verifier."}
         plan_to_use = {
-            "error_classification": post_mortem.category,
-            "root_cause": post_mortem.analysis,
-            "repair_steps": [post_mortem.strategy],
-            "files_to_modify": post_mortem.files_implicated or []
+            "error_classification": pm_category,
+            "root_cause": post_mortem,
+            "repair_steps": [pm_strategy],
+            "files_to_modify": []
         }
     else:
         if is_repeated_strategy:
@@ -79,7 +94,7 @@ async def run_pipeline(code, error, boost, prev, past, prompt, escalation_ctx, p
     yield "ai_thinking", {"role": "Executor", "status": "Generating PHP patches..."}
     exec_result = await ai_service.execute_plan(
         code, error, boost, plan_to_use, escalation_ctx, 
-        post_mortem_strategy=(post_mortem.strategy if post_mortem else ""),
+        post_mortem_strategy=pm_strategy,
         user_prompt=prompt
     )
     yield "api_call", {"role": "Executor", "model": exec_result.model_used, "output": exec_result.response.raw[:500]}

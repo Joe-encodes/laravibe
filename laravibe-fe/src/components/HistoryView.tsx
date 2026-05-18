@@ -53,21 +53,21 @@ export const HistoryView: React.FC = () => {
   );
 
   return (
-    <div className="flex-1 bg-surface-container-lowest p-4 md:p-8 overflow-hidden flex flex-col relative">
+    <div className="flex-1 bg-surface-container-lowest p-6 overflow-hidden flex flex-col relative">
       <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary/5 to-transparent pointer-events-none"></div>
       
       <div className="max-w-6xl mx-auto h-full flex flex-col relative z-10 w-full">
         {/* Header Block */}
-        <div className="mb-8 md:mb-10 border-b border-outline-variant pb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <div className="space-y-3">
+        <div className="mb-8 border-b border-outline-variant pb-6 flex flex-col md:flex-row md:items-end justify-between gap-6">
+          <div className="space-y-2">
              <div className="flex items-center gap-2">
                <History className="w-4 h-4 text-primary" />
-               <span className="font-mono text-[10px] font-black text-primary uppercase tracking-[0.4em]">Operational_Archives</span>
+               <span className="text-hud text-primary">OPERATIONAL_ARCHIVES</span>
              </div>
-            <h1 className="font-mono text-3xl md:text-4xl font-black tracking-tighter text-on-surface uppercase italic flex items-center gap-4">
-              Repair_Hub
+            <h1 className="font-mono text-3xl font-black tracking-tighter text-on-surface uppercase italic">
+              Repair_History
             </h1>
-            <p className="text-on-surface-variant font-sans max-w-2xl text-sm leading-relaxed opacity-70">
+            <p className="text-on-surface-variant text-sm max-w-2xl opacity-70">
               Browse the latest synthesized patches and diagnostic history. Every iteration is logged for audit visibility.
             </p>
           </div>

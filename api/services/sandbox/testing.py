@@ -19,13 +19,25 @@ class MutationResult:
 
 async def run_pest_test(container, test_code: str) -> dict:
     """Run Pest tests and return success/output."""
-    await docker.copy_file(container, "/var/www/sandbox/tests/Feature/RepairTest.php", test_code)
+    test_path = "tests/Feature/RepairTest.php"
+    await docker.copy_file(container, f"/var/www/sandbox/{test_path}", test_code)
+    
+    # Execute the specific test file instead of using --filter (which matches test names, not files)
     res = await docker.execute(
         container,
-        "cd /var/www/sandbox && ./vendor/bin/pest --filter=RepairTest --no-coverage",
+        f"cd /var/www/sandbox && ./vendor/bin/pest {test_path} --no-coverage",
         timeout=60
     )
-    return {"success": res.exit_code == 0, "output": res.stdout}
+    
+    output = res.stdout + res.stderr
+    success = res.exit_code == 0
+    
+    # Detection: Pest sometimes exits 0 even if no tests were found due to filters or missing files
+    if "No tests found" in output:
+        success = False
+        output = "[FAIL] No tests were found in the generated suite.\n" + output
+
+    return {"success": success, "output": output}
 
 async def run_phpstan(container, path: str) -> dict:
     """Run PHPStan Level 5 analysis."""
@@ -40,15 +52,20 @@ async def run_mutation_test(container) -> MutationResult:
         "cd /var/www/sandbox && ./vendor/bin/pest --mutate --format=json", 
         timeout=settings.mutation_timeout_seconds
     )
-    output = res.stdout
+    output = res.stdout + res.stderr
+    score = 0.0
     
-    # Check for infrastructure/soft-pass conditions
+    # Check for infrastructure/soft-pass conditions (pcov missing etc)
     if any(m in output for m in ["Unknown option", "Extension pcov", "command not found"]):
         logger.warning("Mutation test soft-passed due to infrastructure/missing plugin.")
         return MutationResult(100.0, True, output, soft_pass=True)
     
+    # If Pest failed to find tests, mutation score is effectively 0
+    if "No tests found" in output:
+        return MutationResult(0.0, False, f"[FAIL] Mutation gate found no tests to mutate.\n{output}")
+
     try:
-        # Find the last valid JSON object in the output (Pest may output multiple lines/blocks)
+        # Find the last valid JSON object in the output
         matches = list(re.finditer(r'\{.*\}', output, re.DOTALL))
         if matches:
             last_match = matches[-1].group(0)
@@ -60,8 +77,6 @@ async def run_mutation_test(container) -> MutationResult:
             if start_idx != -1:
                 data = json.loads(output[start_idx:])
                 score = float(data.get("msi", 0.0))
-            else:
-                raise ValueError("No JSON object found in output")
     except Exception as e:
         logger.warning(f"Could not parse mutation score JSON. Treating as 0.0%. Error: {e}. Output tail: {output[-200:]}")
             

@@ -85,23 +85,22 @@ export const AdminDashboardView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 bg-surface-container-lowest p-8 overflow-hidden flex flex-col relative">
-      {/* Background HUD Accents */}
+    <div className="flex-1 bg-surface-container-lowest p-6 overflow-hidden flex flex-col relative">
       <div className="absolute top-0 right-0 w-1/2 h-full bg-gradient-to-l from-primary/5 to-transparent pointer-events-none"></div>
       
       <div className="max-w-6xl mx-auto h-full flex flex-col relative z-10 w-full">
         {/* Header Block */}
-        <div className="mb-10 border-b border-outline-variant pb-6 flex items-end justify-between">
+        <div className="mb-8 border-b border-outline-variant pb-6 flex items-end justify-between">
           <div className="space-y-3">
              <div className="flex items-center gap-2">
                <ShieldAlert className="w-4 h-4 text-primary" />
                <span className="mono text-[10px] font-black text-primary uppercase tracking-[0.4em]">Administrative_Override</span>
              </div>
-            <h1 className="font-mono text-4xl font-black tracking-tighter text-on-surface uppercase italic flex items-center gap-4">
+            <h1 className="font-mono text-3xl font-black tracking-tighter text-on-surface uppercase italic flex items-center gap-4">
               Research_Hub
               <div className={cn("h-2 w-2 rounded-full", isEvaluating ? "bg-primary animate-ping" : "bg-secondary animate-pulse shadow-[0_0_10px_rgba(78,222,163,0.5)]")}></div>
             </h1>
-            <p className="text-on-surface-variant font-mono max-w-2xl text-sm leading-relaxed opacity-70">
+            <p className="text-on-surface-variant max-w-2xl text-sm leading-relaxed opacity-70">
               Unified interface for thesis research metadata, automated batch evaluations, and training data distillation.
             </p>
           </div>

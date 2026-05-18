@@ -143,15 +143,19 @@ async def copy_file(container, dest_path: str, content: str) -> None:
         # 2. Forbidden Path/File Check (Check ORIGINAL intended path)
         # If they tried to use an absolute path to a system area, block it
         for forbidden in FORBIDDEN_PATHS:
-            if clean_path.startswith(forbidden):
+            if clean_path.startswith(forbidden) and not clean_path.startswith(SANDBOX_ROOT):
                 raise PermissionError(f"Security Block: Access to system path '{forbidden}' is prohibited.")
 
-        # Re-build absolute path strictly inside SANDBOX_ROOT
-        # Strip leading slashes to make it relative for joining
-        rel_path = clean_path.lstrip("/")
-        
-        # WE MUST NORMALIZE AFTER JOINING to resolve any ../../ attacks
-        abs_dest_path = posixpath.normpath(posixpath.join(SANDBOX_ROOT, rel_path))
+        # Re-build absolute path strictly inside SANDBOX_ROOT.
+        # CRITICAL FIX: If the caller already passed an absolute path inside SANDBOX_ROOT
+        # (e.g. /var/www/sandbox/tests/Feature/RepairTest.php), use it directly.
+        # Stripping the leading slash and re-joining would produce a doubled path like:
+        #   /var/www/sandbox/var/www/sandbox/tests/... which Pest cannot find.
+        if clean_path.startswith(SANDBOX_ROOT):
+            abs_dest_path = clean_path
+        else:
+            rel_path = clean_path.lstrip("/")
+            abs_dest_path = posixpath.normpath(posixpath.join(SANDBOX_ROOT, rel_path))
         
         # 3. Forbidden File Check (Check final filename)
         filename = posixpath.basename(abs_dest_path)
@@ -161,8 +165,6 @@ async def copy_file(container, dest_path: str, content: str) -> None:
             raise PermissionError(f"Security Block: Writing to forbidden file '{filename}' is prohibited.")
 
         # Final safety check: ensure it didn't somehow escape SANDBOX_ROOT
-        # Because we normalized above, /var/www/sandbox/../../etc becomes /etc
-        # and therefore fails this strict startswith check.
         if not abs_dest_path.startswith(SANDBOX_ROOT):
             raise PermissionError(f"Security Block: Path traversal detected for '{dest_path}'")
 
