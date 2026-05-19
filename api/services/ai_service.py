@@ -525,6 +525,36 @@ def _parse_xml_response(raw: str) -> AIRepairResponse:
     # Flexible regex: matches <file ...> content </file> and then extracts attributes
     file_blocks = re.findall(r'<file\s+(.*?)>(.*?)</file>', text, re.DOTALL | re.IGNORECASE)
     
+    # Failsafe scanner fallback: if we have <file tags but failed to parse them with standard regex (e.g. model forgot </file> tags)
+    file_tag_count = len(re.findall(r'<file\s+', text, re.IGNORECASE))
+    if len(file_blocks) < file_tag_count:
+        logger.info(f"Failsafe XML parsing activated: found {file_tag_count} '<file' tags but only parsed {len(file_blocks)} via standard regex.")
+        matches = list(re.finditer(r'<file\s+([^>]+)>', text, re.IGNORECASE))
+        failsafe_blocks = []
+        for idx, match in enumerate(matches):
+            attr_str = match.group(1)
+            start_content = match.end()
+            end_content = len(text)
+            
+            if idx + 1 < len(matches):
+                end_content = matches[idx + 1].start()
+                
+            pest_match = re.search(r'<pest_test>', text[start_content:end_content], re.IGNORECASE)
+            if pest_match:
+                end_content = start_content + pest_match.start()
+                
+            repair_match = re.search(r'</repair>', text[start_content:end_content], re.IGNORECASE)
+            if repair_match:
+                end_content = start_content + repair_match.start()
+                
+            content = text[start_content:end_content]
+            file_close_match = re.search(r'</file>', content, re.IGNORECASE)
+            if file_close_match:
+                content = content[:file_close_match.start()]
+                
+            failsafe_blocks.append((attr_str, content))
+        file_blocks = failsafe_blocks
+    
     patches: list[PatchSpec] = []
     for attr_str, content in file_blocks:
         # Extract action and path from the attribute string (supports either order)

@@ -75,8 +75,8 @@ abstract class Controller { }
 EOF
 fi
 """
-    await docker.copy_file(container, "/tmp/setup_sqlite.sh", sh_script)
-    await docker.execute(container, "bash /tmp/setup_sqlite.sh", timeout=30, user="root")
+    await docker.copy_file(container, "/var/www/sandbox/tmp/setup_sqlite.sh", sh_script)
+    await docker.execute(container, "bash /var/www/sandbox/tmp/setup_sqlite.sh", timeout=30, user="root")
 
 async def place_code_in_laravel(container, info: ClassInfo) -> bool:
     """Inject code into the correct Laravel PSR-4 path and verify via Tinker."""
@@ -98,8 +98,8 @@ async def place_code_in_laravel(container, info: ClassInfo) -> bool:
 async def scaffold_route(container, info: ClassInfo) -> None:
     """Idempotently register a resource route in api.php."""
     php_script = f"<?php $f='/var/www/sandbox/routes/api.php'; $c=file_get_contents($f); if(!str_contains($c,'{info.classname}::class')) file_put_contents($f,\"\\nRoute::apiResource('{info.route_resource}', \\\\{info.fqcn}::class);\\n\",FILE_APPEND);"
-    await docker.copy_file(container, "/tmp/scaffold.php", php_script)
-    await docker.execute(container, "php /tmp/scaffold.php && php /var/www/sandbox/artisan route:clear", timeout=10)
+    await docker.copy_file(container, "/var/www/sandbox/tmp/scaffold.php", php_script)
+    await docker.execute(container, "php /var/www/sandbox/tmp/scaffold.php && php /var/www/sandbox/artisan route:clear", timeout=10)
 
 async def execute_code(container, code: str) -> dict:
     """Write and execute the provided PHP code in the sandbox using Tinker.

@@ -211,7 +211,7 @@
 - [x] ✅ `mutation_score` stored on every iteration (partial score on fails too)
 - [x] ✅ Laravel application log captured on Pest failure (`capture_laravel_log` — last 40 lines)
 - [x] ✅ `TEST_DEPENDENCY_ERROR` prefix injected when crash markers detected in Pest output
-- ⚠️ Mutation score parser returns silent `0.0` with no SSE event when no regex pattern matches
+- [x] ✅ Mutation score parser handles unparsed outputs safely via warnings and emits proper SSE event
 
 ---
 
@@ -339,7 +339,7 @@
 - [x] ✅ `REPAIR_TOKEN` auth header on protected endpoints
 - [x] ✅ `DEBUG=false` in production ENV
 - [x] ✅ `MUTATION_SCORE_THRESHOLD`, `MAX_ITERATIONS`, `MAX_CODE_SIZE_KB` configurable via ENV
-- ⚠️ Mutation test timeout (120 s) is hardcoded in `sandbox_service.py` — not exposed via ENV
+- [x] ✅ Mutation test timeout is configurable via `MUTATION_TIMEOUT_SECONDS` ENV var (fully exposed in config.py)
 
 ---
 

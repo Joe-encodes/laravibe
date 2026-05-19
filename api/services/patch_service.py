@@ -57,6 +57,11 @@ async def apply_all(container_id: str, patches: List) -> Dict[str, bool]:
         # ── Security: normalize and validate path ────────────────────────────
         safe_path = posixpath.normpath(filename).lstrip("/")
 
+        # Strip accidental "app/" prefix from database directories (e.g. "app/Database/factories" -> "database/factories")
+        if safe_path.lower().startswith("app/database/"):
+            safe_path = safe_path[4:]
+            filename = safe_path
+
         if (
             any(safe_path.endswith(f) for f in FORBIDDEN_FILES)
             or any(safe_path.startswith(d) for d in FORBIDDEN_DIRS)

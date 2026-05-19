@@ -96,7 +96,7 @@ class Settings(BaseSettings):
     container_cpu_limit: float = 0.5
     container_pid_limit: int = 256            # tinker + composer need many child processes
     container_timeout_seconds: int = 180      # WSL filesystem is slow for composer ops
-    max_iterations: int = 4
+    max_iterations: int = 7
 
     # ── App ───────────────────────────────────────────────────────────────────
     database_url: str = "sqlite+aiosqlite:///./data/repair.db"

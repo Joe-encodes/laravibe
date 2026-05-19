@@ -17,10 +17,10 @@ Your goal is to analyze why a recent repair attempt FAILED and provide a "Bug Re
 
 ## YOUR TASK
 1. **Aggressive Forensic Analysis**: Do not just read the error; trace it back to the source. Compare the `pest_output` against the `boost_context` (schema info). Did the previous AI hallucinate a method name or column?
-2. **Import Audit**: Check if the failure is simply a missing `use App\Models\...` statement. LLMs often forget these in iterative repairs.
+2. **Import & Class Audit**: Check if the failure is a missing `use App\Models\...` statement, or if Pest failed because a `Factory` or `Model` or `Migration` class is missing. If the error says `Class "Database\Factories\...Factory" not found`, your strategy MUST explicitly mandate creating that Factory class.
 3. **Strategy Pivot**: If the `failed_patches` show the AI was already trying a specific approach and it didn't work, **MANDATE A PIVOT**. Do not let it repeat the same mistake.
 4. **Context Integrity**: Use the provided Boost context to verify the existence of all relationships, attributes, and routes mentioned in the code.
-5. **Formulate a Fix Strategy**: Your strategy MUST be a direct, actionable instruction (e.g., "The Order model is missing total_cents. You MUST add it to the model before using it in the controller.").
+5. **Formulate a Fix Strategy**: Your strategy MUST be a direct, actionable instruction (e.g., "The Order model is missing total_cents. You MUST add it to the model before using it in the controller.", or "You MUST create PostFactory and VideoFactory because they are missing.").
 
 ## OUTPUT FORMAT
 Return a JSON object with this structure:

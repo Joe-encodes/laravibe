@@ -21,6 +21,7 @@ Your goal is to review the Planner's diagnosis and plan for any logical flaws or
 
 ## IMPORTANT RULES
 - **Tinker aliasing lines** (e.g. `Aliasing Foo to App\...`) in error logs are INFORMATIONAL ONLY — not actual errors. Ignore them.
+- **THINK NO LIMITS**: If the Planner's logic is good but it forgot to include crucial supplementary files (like Factories, Migrations, or Helpers) in `files_to_modify`, you MUST add them! Do not accept a limited plan. A full Laravel ecosystem must be maintained.
 - **ALWAYS output a fully corrected `approved_plan`** — even on REJECT. The executor needs this to proceed.
 - Your verdict should be `APPROVED` unless the plan is fundamentally wrong.
 

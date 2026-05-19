@@ -3,7 +3,12 @@
 # Smoke tests ALL major backend API endpoints to ensure the server is healthy.
 
 APP_URL="${APP_URL:-http://localhost:8000}"
-MASTER_TOKEN="${MASTER_TOKEN:-change-me-in-production}"
+
+# Try to read MASTER_REPAIR_TOKEN from .env if not already set
+if [ -z "$MASTER_REPAIR_TOKEN" ] && [ -f .env ]; then
+    MASTER_REPAIR_TOKEN=$(grep -E "^MASTER_REPAIR_TOKEN=" .env | cut -d'=' -f2)
+fi
+MASTER_REPAIR_TOKEN="${MASTER_REPAIR_TOKEN:-laravibe-repair-2026-safe-token}"
 
 echo "=========================================================="
 echo "    LaraVibe Repair Platform — API Smoke Test"
@@ -22,9 +27,25 @@ else
     exit 1
 fi
 
-# 2. Stats Target
-echo "📊 2. Checking /api/stats (Needs Authentication) ..."
-STATS_RESP=$(curl -sL "$APP_URL/api/stats" -H "Authorization: Bearer $MASTER_TOKEN")
+# 2. Login to get JWT Token
+echo "🔑 Logging in to retrieve session JWT ..."
+LOGIN_RESP=$(curl -sL -X POST "$APP_URL/api/auth/login" \
+     -H "Content-Type: application/json" \
+     -d "{\"token\": \"$MASTER_REPAIR_TOKEN\"}")
+
+JWT_TOKEN=$(echo "$LOGIN_RESP" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+if [ -n "$JWT_TOKEN" ]; then
+    echo "   ✅ Login Successful! Session token retrieved."
+else
+    echo "   ❌ Login failed. Check your MASTER_REPAIR_TOKEN."
+    echo "   Output: $LOGIN_RESP"
+    exit 1
+fi
+
+# 3. Stats Target
+echo "📊 3. Checking /api/stats (Needs Authentication) ..."
+STATS_RESP=$(curl -sL "$APP_URL/api/stats" -H "Authorization: Bearer $JWT_TOKEN")
 if echo "$STATS_RESP" | grep -q 'total_repairs'; then
     echo "   ✅ Stats OK"
 else
@@ -33,9 +54,9 @@ else
     exit 1
 fi
 
-# 3. History Target
-echo "📜 3. Checking /api/history (Needs Authentication) ..."
-HISTORY_RESP=$(curl -sL "$APP_URL/api/history?limit=1" -H "Authorization: Bearer $MASTER_TOKEN")
+# 4. History Target
+echo "📜 4. Checking /api/history (Needs Authentication) ..."
+HISTORY_RESP=$(curl -sL "$APP_URL/api/history?limit=1" -H "Authorization: Bearer $JWT_TOKEN")
 if echo "$HISTORY_RESP" | grep -q '"id"'; then
     echo "   ✅ History OK"
 else
@@ -44,8 +65,8 @@ else
     exit 1
 fi
 
-# 4. Repair Submission Queue Test
-echo "🚀 4. Checking /api/repair (Job queueing) ..."
+# 5. Repair Submission Queue Test
+echo "🚀 5. Checking /api/repair (Job queueing) ..."
 PAYLOAD=$(cat << 'EOF'
 {
   "code": "<?php class SmokeTest {} ?>",
@@ -57,7 +78,7 @@ EOF
 )
 
 REPAIR_RESP=$(curl -sL -X POST "$APP_URL/api/repair" \
-     -H "Authorization: Bearer $MASTER_TOKEN" \
+     -H "Authorization: Bearer $JWT_TOKEN" \
      -H "Content-Type: application/json" \
      -d "$PAYLOAD")
 

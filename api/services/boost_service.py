@@ -110,6 +110,21 @@ async def _fetch_boost_context(container, error_text: str) -> BoostContext:
         else:
             schema_info = "No schema info available."
 
+    # 1.5 Query Database Tables
+    db_show_res = await docker_service.execute(
+        container,
+        "php artisan db:show --json 2>&1",
+        timeout=15,
+    )
+    if db_show_res.exit_code == 0:
+        try:
+            db_data = json.loads(db_show_res.stdout)
+            tables = [t.get("table") for t in db_data.get("tables", []) if t.get("table")]
+            if tables:
+                schema_info += "\n\n### EXISTING DATABASE TABLES\n" + "\n".join(f"- {t}" for t in tables)
+        except Exception as e:
+            logger.warning(f"Failed to parse db:show json: {e}")
+
     # 2. Query App Environment/Packages
     about_result = await docker_service.execute(
         container,

@@ -165,8 +165,8 @@ async def run_repair_loop(
             compilation_clean = (classified_error.category == "none")
             # Force AI repair if: compile error, prior pest/mutation failure, or no test code yet
             had_prior_failure = bool(previous_attempts) and previous_attempts[-1].get(
-                "failure_reason"
-            ) in ["pest_failed", "mutation_failed", "test_syntax_error"]
+                "outcome"
+            ) == "failed"
             needs_ai_repair = not compilation_clean or had_prior_failure or not last_pest_code
 
 
@@ -224,6 +224,7 @@ async def run_repair_loop(
                     await db.commit()
                     previous_attempts.append({"diagnosis": "Pipeline Failure", "outcome": "failed",
                                               "failure_reason": "pipeline_error", "action": "execute_plan"})
+                    yield _log_event("iteration_complete", {"num": iteration_num, "success": False})
                     continue
 
                 if not ai_resp or not ai_resp.patches:
@@ -279,6 +280,36 @@ async def run_repair_loop(
                     yield _log_event("error", {"msg": "All patches failed to apply."})
                     break
 
+                # Run database migrations if any successfully applied patch is a migration
+                logger.info(f"[{submission_id}] Debugging has_migration. apply_res keys: {list(apply_res.keys())}")
+                for p in ai_resp.patches:
+                    logger.info(f"[{submission_id}] Debugging has_migration. Patch filename: {p.filename} target: {p.target}")
+                has_migration = False
+                for p in ai_resp.patches:
+                    filename = p.filename or p.target
+                    if filename and apply_res.get(filename, False):
+                        if "migrations/" in filename:
+                            has_migration = True
+                            break
+                if has_migration:
+                    # Clean up obsolete migrations from previous iterations to avoid execution errors
+                    current_applied_paths = {path for path, ok in apply_res.items() if ok}
+                    to_delete = []
+                    for f in list(created_files):
+                        if "migrations/" in f and f not in current_applied_paths:
+                            to_delete.append(f)
+                    
+                    from api.services.sandbox import docker as _docker_mig
+                    for f in to_delete:
+                        logger.info(f"[{submission_id}] Cleaning up obsolete migration from prior iteration: {f}")
+                        await _docker_mig.execute(sandbox.get_container(container_id), f"rm -f /var/www/sandbox/{f}", timeout=5)
+                        created_files.discard(f)
+
+                    yield _log_event("log_line", {"msg": "Database migration detected. Running php artisan migrate:fresh..."})
+                    migrate_res = await _docker_mig.execute(sandbox.get_container(container_id), "php /var/www/sandbox/artisan migrate:fresh --force", timeout=20)
+                    logger.info(f"[{submission_id}] Migration stdout: {migrate_res.stdout} stderr: {migrate_res.stderr}")
+                    yield _log_event("log_line", {"msg": f"Migration completed with exit code {migrate_res.exit_code}"})
+
                 from api.services.sandbox import docker as _docker2
                 await _docker2.execute(sandbox.get_container(container_id), "rm -f /submitted/code.php", timeout=3)
 
@@ -296,8 +327,12 @@ async def run_repair_loop(
                         error_logs += f"\n\nPHPSTAN ({path}):\n{stan_res['output']}"
 
                 # Generate Pest test from AI output
-                cleaned_pest = ai_resp.pest_test.replace("?>", "").replace("```php", "").replace("```", "").strip()
-                pest_code = sandbox.prepare_pest_test(cleaned_pest, class_info.fqcn)
+                cleaned_pest = ai_resp.pest_test.replace("?>", "").replace("```php", "").replace("```", "").strip() if ai_resp.pest_test else ""
+                if not cleaned_pest and last_pest_code:
+                    logger.info(f"[{submission_id}] AI returned empty pest_test — reusing last_pest_code from previous iteration.")
+                    pest_code = last_pest_code
+                else:
+                    pest_code = sandbox.prepare_pest_test(cleaned_pest, class_info.fqcn)
 
                 # Pre-flight lint the pest test
                 preflight_path = "tests/Feature/PestPreflightTest.php"

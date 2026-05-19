@@ -151,7 +151,7 @@ async def export_research_data(
     return response
 
 
-@router.get("/")
+@router.get("")
 async def get_unified_stats(
     db: AsyncSession = Depends(get_db),
     current_user: dict = Depends(get_current_user),

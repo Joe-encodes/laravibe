@@ -49,36 +49,36 @@ async def run_mutation_test(container) -> MutationResult:
     """Execute and parse Pest mutation tests."""
     res = await docker.execute(
         container, 
-        "cd /var/www/sandbox && ./vendor/bin/pest --mutate --format=json", 
+        "cd /var/www/sandbox && ./vendor/bin/pest --mutate", 
         timeout=settings.mutation_timeout_seconds
     )
     output = res.stdout + res.stderr
+    
+    # Strip ANSI escape sequences to get clean text
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    clean_output = ansi_escape.sub('', output)
+    
     score = 0.0
     
     # Check for infrastructure/soft-pass conditions (pcov missing etc)
-    if any(m in output for m in ["Unknown option", "Extension pcov", "command not found"]):
+    if any(m in clean_output for m in ["Extension pcov", "command not found"]):
         logger.warning("Mutation test soft-passed due to infrastructure/missing plugin.")
         return MutationResult(100.0, True, output, soft_pass=True)
     
     # If Pest failed to find tests, mutation score is effectively 0
-    if "No tests found" in output:
-        return MutationResult(0.0, False, f"[FAIL] Mutation gate found no tests to mutate.\n{output}")
+    if "No tests found" in clean_output:
+        return MutationResult(0.0, False, f"[FAIL] Mutation gate found no tests to mutate.\n{clean_output}")
 
     try:
-        # Find the last valid JSON object in the output
-        matches = list(re.finditer(r'\{.*\}', output, re.DOTALL))
-        if matches:
-            last_match = matches[-1].group(0)
-            data = json.loads(last_match)
-            score = float(data.get("msi", 0.0))
+        # Parse the score from the plain text output
+        # Format is typically "Score:     0.00%" or "Score: 83.33%"
+        score_match = re.search(r'Score:\s*([0-9.]+)%', clean_output)
+        if score_match:
+            score = float(score_match.group(1))
         else:
-            # Fallback to simple find
-            start_idx = output.find('{')
-            if start_idx != -1:
-                data = json.loads(output[start_idx:])
-                score = float(data.get("msi", 0.0))
+            logger.warning(f"Could not parse mutation score from plain text output. Treating as 0.0%. Output tail: {clean_output[-200:]}")
     except Exception as e:
-        logger.warning(f"Could not parse mutation score JSON. Treating as 0.0%. Error: {e}. Output tail: {output[-200:]}")
+        logger.warning(f"Error parsing mutation score: {e}. Output tail: {clean_output[-200:]}")
             
     return MutationResult(score, score >= settings.mutation_score_threshold, output)
 

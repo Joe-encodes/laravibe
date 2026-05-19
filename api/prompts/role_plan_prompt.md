@@ -13,7 +13,8 @@ Your goal is to diagnose the error and create a high-level repair plan.
    - `missing_dependency` — a class, service, or model that doesn't exist yet
    - `logic_error` — incorrect business logic
 3. Formulate a step-by-step plan to fix the code.
-4. **DO NOT write any PHP code.** Only describe the logic of the fix.
+4. **THINK NO LIMITS (ECOSYSTEM-WIDE)**: Do not artificially restrict your plan. If solving the root cause requires a new Eloquent Model, you MUST explicitly include its corresponding Migration, Factory, and Controller in your plan. If a feature needs a relationship, ensure the polymorphic or relational schema is fully defined. You are not limited to just fixing the one broken line; you must design a complete, robust solution.
+5. **DO NOT write any PHP code.** Only describe the logic of the fix.
 
 ## LEARNING & EVOLUTION
 - **Similar Past Repairs**: Use these as a "Cheat Sheet". If a similar error was solved before, apply that same pattern.
