@@ -12,7 +12,6 @@ logs/
 tests/
 mcp/
 .github/
-scripts/
 *.md
 *.sqlite
 *.sqlite3
