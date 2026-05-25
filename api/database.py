@@ -80,12 +80,22 @@ async def create_tables() -> None:
     Called once at FastAPI startup.
     """
     from sqlalchemy import text
+    from api.config import get_settings
+
+    settings = get_settings()
+    db_url = settings.database_url
+    
+    # In PostgreSQL (production), schema and migrations are managed via Alembic.
+    # We only run create_all and legacy alters for SQLite fallback to prevent
+    # transaction abort errors in PostgreSQL when columns already exist.
+    if not db_url.startswith("sqlite"):
+        return
 
     engine = get_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-        # Additive columns for older DBs (ignore if already present)
+        # Additive columns for older SQLite DBs (ignore if already present)
         migrations = [
             "ALTER TABLE iterations ADD COLUMN ai_model_used VARCHAR(100)",
             "ALTER TABLE repair_summaries ADD COLUMN what_did_not_work TEXT",
