@@ -39,3 +39,19 @@ def test_classify_database_error():
     logs = "SQLSTATE[HY000]: General error: 1 table users already exists"
     result = classify_error(logs)
     assert result.category == "DATABASE_ERROR"
+
+def test_classify_missing_import():
+    logs_single = "Class 'App\\Http\\Api\\Controller' not found in app/Http/Api/UserController.php on line 5"
+    result_single = classify_error(logs_single)
+    assert result_single.category == "MISSING_IMPORT"
+    assert result_single.details["class"] == "App\\Http\\Api\\Controller"
+
+    logs_double = 'Class "App\\Http\\Api\\Controller" not found in app/Http/Api/UserController.php on line 5'
+    result_double = classify_error(logs_double)
+    assert result_double.category == "MISSING_IMPORT"
+    assert result_double.details["class"] == "App\\Http\\Api\\Controller"
+
+    logs_trait = "Trait 'App\\Traits\\MyTrait' not found in app/Models/User.php on line 5"
+    result_trait = classify_error(logs_trait)
+    assert result_trait.category == "MISSING_IMPORT"
+    assert result_trait.details["class"] == "App\\Traits\\MyTrait"

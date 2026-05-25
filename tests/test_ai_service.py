@@ -70,3 +70,42 @@ def test_sanitize_php_literal_newlines():
     code = "<?php\\necho 'hi';\\n"
     sanitized = _sanitize_php(code)
     assert sanitized == "<?php\necho 'hi';\n"
+
+
+@pytest.mark.asyncio
+async def test_dashscope_dynamic_rotation_and_failover(monkeypatch):
+    import api.services.ai_service as ai_service
+    
+    called_models = []
+    
+    async def mock_call_with_key(prompt, provider, model, api_key, json_mode=False, max_tokens=4096):
+        called_models.append(model)
+        if len(called_models) < 3:
+            # First two models fail
+            raise ai_service.AIServiceError("Rate limit / Quota exceeded")
+        return f"SUCCESS with {model}"
+        
+    monkeypatch.setattr(ai_service, "_call_with_key", mock_call_with_key)
+    monkeypatch.setattr(ai_service, "_get_provider_keys", lambda p: ["fake-api-key"])
+    
+    res = await ai_service._call_provider_with_key_rotation(
+        prompt="hello",
+        provider="dashscope",
+        model="qwen-plus",
+        role_name="Executor",
+        json_mode=False,
+        max_tokens=4096
+    )
+    
+    assert res.startswith("SUCCESS with")
+    assert len(called_models) == 3
+    executor_candidates = {
+        "qwen3-coder-next",
+        "qwen3.6-max-preview",
+        "qwen3.6-plus",
+        "deepseek-v3.2",
+        "qwen-max",
+    }
+    for m in called_models:
+        assert m in executor_candidates
+

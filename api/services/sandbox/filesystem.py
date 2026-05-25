@@ -40,9 +40,12 @@ def prepare_pest_test(test_code: str, target_fqcn: str) -> str:
         fqcn = target_fqcn if target_fqcn.startswith("\\") else "\\" + target_fqcn
         test_code = test_code.replace("<?php", f"<?php\ncovers({fqcn}::class);")
         
-    # Ensure Laravel JSON function imports
-    imports = "use function Pest\\Laravel\\{getJson,postJson,putJson,patchJson,deleteJson};"
-    if "Pest\\Laravel" not in test_code:
-        test_code = test_code.replace("<?php", f"<?php\n{imports}")
+    # Remove any existing individual or grouped Pest\Laravel helper imports to avoid duplicate/missing declarations
+    test_code = re.sub(r'use\s+function\s+Pest\\Laravel\\(?:getJson|postJson|putJson|patchJson|deleteJson|get|post|put|patch|delete)\s*;', '', test_code)
+    test_code = re.sub(r'use\s+function\s+Pest\\Laravel\\\{[^}]*\}\s*;', '', test_code)
+    
+    # Prepend the complete set of Laravel helper function imports
+    imports = "use function Pest\\Laravel\\{get,post,put,patch,delete,getJson,postJson,putJson,patchJson,deleteJson};"
+    test_code = test_code.replace("<?php", f"<?php\n{imports}")
         
     return test_code

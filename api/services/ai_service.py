@@ -70,6 +70,7 @@ class AIRepairResponse:
     prompt:          str
     model_used:      str = "unknown"
     reviewer_evidence: dict | None = None
+    is_partial_batch: bool = False
 
 
 @dataclass
@@ -122,6 +123,9 @@ class AIServiceError(Exception):
 
 ALLOWED_PATCH_ACTIONS = {"full_replace", "create_file"}
 
+_FAILED_KEYS: dict[str, float] = {}
+FAILED_KEY_COOLDOWN_SECONDS = 3600  # 1 hour
+
 
 # ── Provider registry ─────────────────────────────────────────────────────────
 
@@ -160,52 +164,50 @@ def _build_pool_from_config(raw_pool: list[tuple[str, str]]) -> list[tuple[str, 
 
 # ── Model pools ──────────────────────────────────────────────────────────────
 # Priority order: best quality/speed first, fallbacks at end.
-# Cerebras and Dashscope are always last-resort backups.
-# NOTE: Nvidia has higher TPM limits and is reserved as Executor primary.
+# Nvidia is the primary Executor (40 RPM, highest XML/PHP quality on free tier).
+# Dashscope uses code-specialised models (qwen2.5-coder) for Executor and
+# qwen-plus for planning roles — qwen3-max quota is exhausted.
+# Cerebras (llama-3.3-70b) is restricted to Verifier/Reviewer: fast JSON,
+# not suitable for large PHP code generation.
 
-# Planner needs strong logic + reliable JSON.
-# We prioritize Groq and Cerebras for speed, followed by Gemini.
+# Planner: strong logic + reliable JSON output required.
 PLANNER_POOL: list[tuple[str, str]] = _build_pool_from_config([
-    ("groq",       "llama-3.3-70b-versatile"),    # Fast but rate-limited
-    ("cerebras",   "llama3.1-8b"),              # Blazing fast fallback
-    ("gemini",     "gemini-2.5-flash"),           # Strong reasoning fallback
-    ("dashscope",  "qwen3-max"),                   # High quota, strong reasoning
-    ("nvidia",     "meta/llama-3.3-70b-instruct"),# Last resort
+    ("groq",       "llama-3.3-70b-versatile"),      # High speed, reliable JSON
+    ("nvidia",     "meta/llama-3.3-70b-instruct"),  # High quality, 40 RPM
+    ("gemini",     "gemini-2.5-flash"),              # Strong reasoning fallback
+    ("dashscope",  "qwen-plus"),                     # Stable quota, different from Executor pool
 ])
 
-# Verifier needs same JSON reliability as Planner
+# Verifier: fast JSON verdict + correction — Cerebras 70B is ideal here.
 VERIFIER_POOL: list[tuple[str, str]] = _build_pool_from_config([
+    ("cerebras",   "llama3.1-8b"),                # Fastest 8B; JSON-only output suits it
     ("groq",       "llama-3.3-70b-versatile"),
-    ("cerebras",   "llama3.1-8b"),
-    ("gemini",     "gemini-2.5-flash"),
-    ("dashscope",  "qwen3-max"),
     ("nvidia",     "meta/llama-3.3-70b-instruct"),
-])
-
-# Executor needs best XML/PHP code quality — Nvidia first (40 RPM, best 70B quality)
-EXECUTOR_POOL: list[tuple[str, str]] = _build_pool_from_config([
-    ("nvidia",     "meta/llama-3.3-70b-instruct"),# Primary: highest quality XML
-    ("dashscope",  "qwen3-max"),                   # Strong coding fallback
-    ("groq",       "llama-3.3-70b-versatile"),
-    ("cerebras",   "llama3.1-8b"),
     ("gemini",     "gemini-2.5-flash"),
 ])
 
-# Reviewer needs XML parsing quality
+# Executor: Nvidia primary (best XML/PHP on free tier).
+# Dashscope qwen2.5-coder is code-specialised and on a separate quota.
+# NO Cerebras here — 8B/small models produce hollow Pest suites.
+EXECUTOR_POOL: list[tuple[str, str]] = _build_pool_from_config([
+    ("nvidia",     "meta/llama-3.3-70b-instruct"),  # Primary: 40 RPM, high XML quality
+    ("dashscope",  "qwen2.5-coder-32b-instruct"),   # Code-specialised fallback
+    ("groq",       "llama-3.3-70b-versatile"),       # Last resort (rate-limited)
+])
+
+# Reviewer: validates XML structure.
 REVIEWER_POOL: list[tuple[str, str]] = _build_pool_from_config([
     ("groq",       "llama-3.3-70b-versatile"),
-    ("cerebras",   "llama3.1-8b"),
-    ("gemini",     "gemini-2.5-flash"),
-    ("dashscope",  "qwen3-max"),
     ("nvidia",     "meta/llama-3.3-70b-instruct"),
+    ("gemini",     "gemini-2.5-flash"),
+    ("cerebras",   "llama3.1-8b"),                # Last resort fallback
 ])
 
 POST_MORTEM_POOL: list[tuple[str, str]] = _build_pool_from_config([
     ("groq",       "llama-3.3-70b-versatile"),
-    ("cerebras",   "llama3.1-8b"),
-    ("gemini",     "gemini-2.5-flash"),
-    ("dashscope",  "qwen3-max"),
     ("nvidia",     "meta/llama-3.3-70b-instruct"),
+    ("gemini",     "gemini-2.5-flash"),
+    ("dashscope",  "qwen-plus"),
 ])
 
 
@@ -241,6 +243,7 @@ async def _call_with_key(
     model: str,
     api_key: str,
     json_mode: bool = False,
+    max_tokens: int = 4096,
 ) -> str:
     """
     Low-level: call a single OpenAI-compatible provider with an explicit key.
@@ -265,13 +268,14 @@ async def _call_with_key(
         api_key=api_key,
         base_url=base_url,
         max_retries=0,
+        http_client=httpx.AsyncClient(http2=False),
         timeout=httpx.Timeout(connect=15.0, read=150.0, write=10.0, pool=5.0),
     )
 
     kwargs: dict = {
         "model":       model or cfg["default_model"],
         "temperature": 0.0 if json_mode else settings.ai_temperature,
-        "max_tokens":  4096,
+        "max_tokens":  max_tokens,
         "messages":    [{"role": "user", "content": prompt}],
     }
     if json_mode and provider in _JSON_MODE_PROVIDERS:
@@ -288,11 +292,33 @@ async def _call_with_key(
             kwargs.pop("response_format", None)
             resp = await client.chat.completions.create(**kwargs)
         else:
-            import traceback
-            logger.error(f"[AI] {provider}/{kwargs['model']} fatal error: {exc}\n{traceback.format_exc()}")
+            is_common_error = any(k in msg for k in (
+                "rate_limit", "429", "too many requests", "quota", "limit_exceeded",
+                "401", "authentication", "api_key", "unauthorized", "auth",
+                "timeout", "timed out", "connection", "connect", "apitimeouterror", "apiconnectionerror",
+                "overloaded", "service_unavailable", "503", "502", "500"
+            ))
+            if is_common_error:
+                logger.warning(f"[AI] {provider}/{kwargs['model']} failed with expected API error (will rotate/retry): {exc}")
+            else:
+                import traceback
+                logger.error(f"[AI] {provider}/{kwargs['model']} fatal error: {exc}\n{traceback.format_exc()}")
             raise
 
-    return resp.choices[0].message.content
+    content = resp.choices[0].message.content
+
+    # Providers sometimes return a response where both `content` and `tool_calls`
+    # are empty/None. This produces "model output must contain either output text
+    # or tool calls" on the *next* API call that uses this content as a message.
+    # Detect it here and raise so the upstream rotation/retry logic handles it.
+    if not content:
+        finish_reason = getattr(resp.choices[0], "finish_reason", "unknown")
+        raise AIServiceError(
+            f"[AI] {provider}/{kwargs['model']} returned empty content "
+            f"(finish_reason={finish_reason!r}). Will rotate/retry."
+        )
+
+    return content
 
 
 async def _call_openai_compatible(
@@ -331,6 +357,7 @@ async def _call_provider_with_key_rotation(
     model: str,
     role_name: str,
     json_mode: bool = False,
+    max_tokens: int = 4096,
 ) -> str:
     """
     For groq and cerebras: cycle through ALL configured keys on 429 before
@@ -348,14 +375,71 @@ async def _call_provider_with_key_rotation(
     if not keys:
         raise AIServiceError(f"[{role_name}] {provider} has no API key configured — skipping")
 
+    if provider == "dashscope":
+        import random
+        # DashScope model randomization and dynamic failover to avoid rate limits / quota exhaustion
+        if role_name == "Executor":
+            candidates = [
+                "qwen3-coder-next",
+                "qwen3.6-max-preview",
+                "qwen3.6-plus",
+                "deepseek-v3.2",
+                "qwen-max",
+            ]
+        elif role_name in ("Reviewer", "Verifier"):
+            candidates = [
+                "qwen3.6-flash",
+                "qwen3.5-flash",
+                "deepseek-v4-flash",
+                "qwen3.6-plus",
+            ]
+        else:  # Planner, PostMortem, or default
+            candidates = [
+                "qwen3.6-max-preview",
+                "qwen3.6-plus",
+                "qwen3.5-397b-a17b",
+                "qwen3.5-plus-2026-02-15",
+                "qwen-max",
+            ]
+        random.shuffle(candidates)
+        
+        last_exc: Exception | None = None
+        api_key = keys[0] if keys else ""
+        for model_candidate in candidates:
+            try:
+                logger.info(f"[AI/{role_name}] Trying DashScope model candidate: {model_candidate}")
+                text = await _call_with_key(
+                    prompt, provider, model_candidate, api_key, json_mode, max_tokens
+                )
+                return text
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(f"[AI/{role_name}] DashScope model {model_candidate} failed: {exc}. Trying next candidate...")
+                await _asyncio.sleep(0.3)
+        raise last_exc or AIServiceError("dashscope all candidates failed")
+
     last_exc: Exception | None = None
 
     for key_index, api_key in enumerate(keys):
         key_label = f"key#{key_index + 1}"
+        if api_key in _FAILED_KEYS:
+            import time
+            fail_entry = _FAILED_KEYS[api_key]
+            if isinstance(fail_entry, tuple):
+                fail_time, cooldown_s = fail_entry
+            else:
+                fail_time, cooldown_s = fail_entry, FAILED_KEY_COOLDOWN_SECONDS
+
+            if time.time() - fail_time < cooldown_s:
+                logger.info(f"[AI/{role_name}] {provider} {key_label} is in cooldown (expires in {int(cooldown_s - (time.time() - fail_time))}s). Skipping.")
+                continue
+            else:
+                del _FAILED_KEYS[api_key]
+
         try:
             logger.info(f"[AI/{role_name}] {provider}/{resolved_model} [{key_label}]")
             text = await _call_with_key(
-                prompt, provider, resolved_model, api_key, json_mode
+                prompt, provider, resolved_model, api_key, json_mode, max_tokens
             )
             if key_index > 0:
                 logger.info(
@@ -373,27 +457,53 @@ async def _call_provider_with_key_rotation(
                 or "too many requests" in msg
                 or "quota" in msg
             )
+            # Empty-content responses ("model output must contain either output text
+            # or tool calls") are transient — the model produced nothing this time.
+            # Treat as retryable: rotate keys first, then fall through to next provider.
+            # Use a short cooldown (not the 1h hard-failure window).
+            is_empty_output = "returned empty content" in msg or "output text or tool calls" in msg
 
-            if is_rate_limited and provider in _MULTI_KEY_PROVIDERS:
-                # Only rotate keys on rate-limit errors
+            import time
+            if is_rate_limited:
+                retry_s = _parse_retry_after(exc)
+                # 12s minimum: Groq 429s usually clear in 1–15s.
+                # 30s was causing ALL keys to stay locked for a full pipeline round.
+                cooldown_s = max(retry_s or 12.0, 12.0)
+            elif is_empty_output:
+                cooldown_s = 5.0  # Very short — transient fluke, try again quickly
+            else:
+                cooldown_s = FAILED_KEY_COOLDOWN_SECONDS  # Hard failure cooldown: 1h
+
+            _FAILED_KEYS[api_key] = (time.time(), cooldown_s)
+
+            if (is_rate_limited or is_empty_output) and provider in _MULTI_KEY_PROVIDERS:
+                # Rotate keys on rate-limit AND empty-output errors
                 next_key_num = key_index + 2  # human-readable
                 if key_index + 1 < len(keys):
+                    reason = "rate-limited" if is_rate_limited else "returned empty output"
                     logger.warning(
-                        f"[AI/{role_name}] {provider} {key_label} rate-limited — "
+                        f"[AI/{role_name}] {provider} {key_label} {reason} — "
                         f"switching to key#{next_key_num} immediately."
                     )
-                    # Brief pause to avoid hammering — much shorter than a full
-                    # provider-level backoff since we own multiple keys
                     await _asyncio.sleep(0.3)
                     continue
                 else:
                     logger.warning(
-                        f"[AI/{role_name}] {provider} all {len(keys)} keys rate-limited — "
+                        f"[AI/{role_name}] {provider} all {len(keys)} keys exhausted "
+                        f"({'rate-limited' if is_rate_limited else 'empty output'}) — "
                         f"falling through to next provider."
                     )
                     raise
+            elif is_empty_output:
+                # Single-key provider returned empty output — fall through to next provider
+                logger.warning(
+                    f"[AI/{role_name}] {provider}/{resolved_model} [{key_label}] "
+                    f"returned empty content (finish_reason may be 'stop' with no tokens). "
+                    f"Falling through to next provider."
+                )
+                raise
             else:
-                # Non-rate-limit error (auth failure, bad response, etc.) — don't
+                # Non-rate-limit, non-empty error (auth failure, etc.) — don't
                 # burn through remaining keys, just raise immediately.
                 logger.warning(
                     f"[AI/{role_name}] {provider}/{resolved_model} [{key_label}] "
@@ -401,7 +511,39 @@ async def _call_provider_with_key_rotation(
                 )
                 raise
 
-    # Exhausted all keys
+    # All keys exhausted — for multi-key providers (groq/cerebras) try waiting for
+    # the soonest key to come off rate-limit cooldown rather than immediately bailing
+    # to a much weaker fallback model.
+    if provider in _MULTI_KEY_PROVIDERS and keys:
+        import time as _time
+        soonest_unlock_in: float | None = None
+        soonest_key: str | None = None
+        for api_key in keys:
+            if api_key in _FAILED_KEYS:
+                entry = _FAILED_KEYS[api_key]
+                fail_time, cd_s = entry if isinstance(entry, tuple) else (entry, FAILED_KEY_COOLDOWN_SECONDS)
+                remaining = cd_s - (_time.time() - fail_time)
+                if remaining > 0 and (cd_s < FAILED_KEY_COOLDOWN_SECONDS):  # Only rate-limit cooldowns, not hard failures
+                    if soonest_unlock_in is None or remaining < soonest_unlock_in:
+                        soonest_unlock_in = remaining
+                        soonest_key = api_key
+
+        MAX_WAIT_FOR_KEY_S = 20.0  # Never block the pipeline longer than this
+        if soonest_key and soonest_unlock_in is not None and soonest_unlock_in <= MAX_WAIT_FOR_KEY_S:
+            logger.info(
+                f"[AI/{role_name}] All {provider} keys rate-limited. "
+                f"Waiting {soonest_unlock_in:.1f}s for key to recover before falling back."
+            )
+            await _asyncio.sleep(soonest_unlock_in + 0.5)
+            del _FAILED_KEYS[soonest_key]
+            try:
+                text = await _call_with_key(prompt, provider, resolved_model, soonest_key, json_mode, max_tokens)
+                logger.info(f"[AI/{role_name}] {provider} key recovered after wait. Succeeded.")
+                return text
+            except Exception as retry_exc:
+                logger.warning(f"[AI/{role_name}] {provider} key still failing after wait: {retry_exc}")
+                _FAILED_KEYS[soonest_key] = (_time.time(), 12.0)
+
     raise last_exc or AIServiceError(f"{provider} all keys exhausted")
 
 
@@ -440,6 +582,7 @@ async def _call_role_pool(
     pool: list[tuple[str, str]],
     role_name: str,
     json_mode: bool = False,
+    max_tokens: int = 4096,
 ) -> tuple[str, str]:
     """
     Try providers in pool order. For groq/cerebras, key rotation is attempted
@@ -453,7 +596,7 @@ async def _call_role_pool(
     for provider, model in pool:
         try:
             text = await _call_provider_with_key_rotation(
-                prompt, provider, model, role_name, json_mode
+                prompt, provider, model, role_name, json_mode, max_tokens
             )
             if json_mode and "{" not in text:
                 raise ValueError(f"{provider}/{model}: no JSON object in response")
@@ -615,12 +758,20 @@ def _sanitize_php(code: str, file_path: str = "") -> str:
     # Enforce anonymous migration syntax ONLY for migration files
     if "database/migrations" in file_path.lower() or "migration" in file_path.lower():
         if "extends Migration" in code and "return new class extends Migration" not in code:
-            code = re.sub(
+            new_code, count = re.subn(
                 r"class\s+\w+\s+extends\s+Migration",
                 "return new class extends Migration",
                 code,
                 flags=re.MULTILINE,
             )
+            if count > 0:
+                code = new_code
+                # Ensure the anonymous class statement has a trailing semicolon
+                last_brace = code.rfind('}')
+                if last_brace != -1:
+                    after_brace = code[last_brace+1:].strip()
+                    if not after_brace.startswith(';'):
+                        code = code[:last_brace+1] + ';' + code[last_brace+1:]
 
     return code
 
@@ -830,9 +981,37 @@ async def execute_plan(
     escalation_context: str = "",
     post_mortem_strategy: str = "",
     user_prompt: str | None = None,
+    created_files: list[str] | None = None,
+    current_batch: list[str] | None = None,
+    remaining_files: list[str] | None = None,
 ) -> ExecuteResult:
     """Generate all PHP code from the approved plan. Returns XML output."""
     plan_str = json.dumps(approved_plan, ensure_ascii=False, indent=2)
+    
+    batch_context_str = ""
+    if current_batch is not None:
+        batch_context_str = (
+            f"### BATCH EXECUTION MODE\n"
+            f"- Already Created/Modified Files: {created_files or []}\n"
+            f"- Assigned Files for This Iteration (Current Batch): {current_batch}\n"
+            f"- Files Deferred for Future Iterations: {remaining_files or []}\n\n"
+            f"IMPORTANT: You are operating in BATCH EXECUTION MODE because the total number of files "
+            f"to generate is large. You MUST ONLY generate code for the assigned files in the current batch: {current_batch}.\n"
+            f"Do NOT generate the deferred files {remaining_files or []} in this iteration. They will be generated in subsequent iterations.\n"
+            f"Ensure you output complete, high-quality code for each assigned file.\n"
+            f"Keep your <pest_test> block minimal or empty for now. You will write the full test suite in the final batch iteration.\n"
+        )
+
+    post_mortem_strategy_block = (
+        f"## ⚠️ MANDATORY DIRECTIVE — CRITIC ANALYSIS FROM PREVIOUS FAILURE\n"
+        f"The previous repair attempt failed. The Critic has identified the root cause and mandated the following strategy.\n"
+        f"You MUST follow this instruction. It is NOT optional.\n\n"
+        f"**REQUIRED ACTION**: {post_mortem_strategy}\n\n"
+        f"In your `<thought_process>` block, you MUST explicitly state how you are addressing this directive before describing anything else.\n"
+        f"If you do not address this directive, your output will be rejected.\n\n"
+        f"---\n"
+    ) if post_mortem_strategy else ""
+
     prompt = _build_role_prompt(
         _get_execute_prompt(),
         code=_truncate_ctx(code, 6000),
@@ -840,10 +1019,11 @@ async def execute_plan(
         boost_context=_truncate_ctx(boost_context, 3000),
         approved_plan=_truncate_ctx(plan_str, 4000),
         escalation_context=_truncate_ctx(escalation_context, 2000),
-        post_mortem_strategy=post_mortem_strategy,
+        post_mortem_strategy_block=post_mortem_strategy_block,
         user_prompt=user_prompt or "",
+        batch_context=batch_context_str,
     )
-    raw, model_used = await _call_role_pool(prompt, EXECUTOR_POOL, "Executor", json_mode=False)
+    raw, model_used = await _call_role_pool(prompt, EXECUTOR_POOL, "Executor", json_mode=False, max_tokens=8192)
     resp = _parse_xml_response(raw)
     resp.prompt     = prompt
     resp.model_used = model_used
@@ -927,7 +1107,7 @@ async def review_output(
     if repairs:
         logger.info(f"[Reviewer] Inline repairs: {repairs}")
         
-    final_resp = validated_resp or (exec_result.response if exec_result else None)
+    final_resp = validated_resp
     if final_resp:
         final_resp.reviewer_evidence = evidence
 
@@ -958,15 +1138,31 @@ def _fallback_post_mortem(failure_reason: str) -> dict:
             "category": "syntax",
             "strategy": "Double check all braces and semicolons. Ensure you are not nesting classes or missing '<?php' tags."
         },
+        "phpstan_failed": {
+            "analysis": "PHPStan static analysis failed because of type-system or import errors.",
+            "category": "type_error",
+            "strategy": "Fix all PHPStan static analysis type errors. Ensure all type hints and return types are correct, and all classes/interfaces are imported."
+        },
         "pest_failed": {
             "analysis": "The code applied successfully but the functional tests are still failing.",
             "category": "logic",
             "strategy": "The logical approach is incorrect. Re-read the requirements. Check if you missed an edge case like 404 handling or validation errors."
         },
         "mutation_failed": {
-            "analysis": "The code passed tests but failed the mutation gate (too brittle).",
-            "category": "brittleness",
-            "strategy": "Remove hardcoded values. Use parameterized logic. Ensure the code handles generic cases, not just the one in the test."
+            "analysis": "Pest passed but the mutation gate failed — the test suite has gaps that allow mutants to survive.",
+            "category": "mutation_gap",
+            "strategy": (
+                "The application code is correct — DO NOT change controller or model logic. "
+                "The test suite is missing mutation-killing assertions. You MUST add: "
+                "(1) assertJsonValidationErrors(['field']) for EVERY required/sometimes field in SEPARATE it() blocks — "
+                "this kills RemoveArrayItem mutations on validation rules. "
+                "(2) assertJsonPath('field', $specificValue) on store/update responses in addition to assertDatabaseHas — "
+                "this kills return-value mutations. "
+                "(3) assertJsonPath('message', 'expected string') on destroy responses — "
+                "this kills mutations that return an empty array instead of the message. "
+                "(4) A 404 test for show with a non-existent ID. "
+                "Rewrite the entire <pest_test> with these additions. Keep all existing passing assertions."
+            )
         }
     }
     return strategies.get(failure_reason, {
@@ -1025,7 +1221,7 @@ def validate_prompts():
     roles = {
         "Plan": (_get_plan_prompt(), ["code", "error", "boost_context", "previous_attempts"]),
         "Verify": (_get_verify_prompt(), ["code", "error", "planner_output"]),
-        "Execute": (_get_execute_prompt(), ["code", "error", "approved_plan", "post_mortem_strategy"]),
+        "Execute": (_get_execute_prompt(), ["code", "error", "approved_plan", "post_mortem_strategy_block"]),
         "Review": (_get_review_prompt(), ["executor_output", "approved_plan"]),
         "Post-Mortem": (_get_post_mortem_prompt(), ["code", "failure_reason", "pest_output", "boost_context", "failed_patches", "laravel_log"])
     }

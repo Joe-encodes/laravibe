@@ -27,6 +27,8 @@ def _safe_json_dumps(obj) -> str:
     from dataclasses import is_dataclass, asdict
     class _Fallback(json.JSONEncoder):
         def default(self, o):
+            if "mock" in type(o).__name__.lower():
+                return f"<Mock id={id(o)}>"
             if is_dataclass(o): return asdict(o)
             if hasattr(o, "__dict__"): return o.__dict__
             try: return super().default(o)
@@ -44,11 +46,23 @@ async def run_repair_loop(
     """Orchestrate one full repair lifecycle: sandbox → AI loop → persist results."""
     set_submission_id(submission_id)
 
-    submission = (
-        await db.execute(select(Submission).where(Submission.id == submission_id))
-    ).scalar_one()
-    submission.status = "running"
-    await db.commit()
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def get_session():
+        if db is not None:
+            yield db
+        else:
+            from api.database import AsyncSessionLocal
+            async with AsyncSessionLocal() as session:
+                yield session
+
+    async with get_session() as session:
+        submission = (
+            await session.execute(select(Submission).where(Submission.id == submission_id))
+        ).scalar_one()
+        submission.status = "running"
+        await session.commit()
 
     # 0. Pre-flight Docker Check
     try:
@@ -57,9 +71,13 @@ async def run_repair_loop(
     except Exception as d_exc:
         logger.error(f"[{submission_id}] Docker engine unreachable: {d_exc}")
         yield {"event": "error", "data": {"msg": "Critical Error: Docker engine is unreachable."}}
-        submission.status = "failed"
-        submission.error_summary = "Docker engine unreachable"
-        await db.commit()
+        async with get_session() as session:
+            submission = (
+                await session.execute(select(Submission).where(Submission.id == submission_id))
+            ).scalar_one()
+            submission.status = "failed"
+            submission.error_summary = "Docker engine unreachable"
+            await session.commit()
         return
 
     previous_attempts: list[dict] = []
@@ -67,14 +85,22 @@ async def run_repair_loop(
 
     try:
         container_id = await sandbox.create_sandbox()
-        submission.container_id = container_id
-        await db.commit()
+        async with get_session() as session:
+            submission = (
+                await session.execute(select(Submission).where(Submission.id == submission_id))
+            ).scalar_one()
+            submission.container_id = container_id
+            await session.commit()
     except Exception as c_exc:
         logger.error(f"[{submission_id}] Failed to create sandbox: {c_exc}")
         yield {"event": "error", "data": {"msg": f"Failed to create sandbox: {c_exc}"}}
-        submission.status = "failed"
-        submission.error_summary = f"Sandbox creation failed: {c_exc}"
-        await db.commit()
+        async with get_session() as session:
+            submission = (
+                await session.execute(select(Submission).where(Submission.id == submission_id))
+            ).scalar_one()
+            submission.status = "failed"
+            submission.error_summary = f"Sandbox creation failed: {c_exc}"
+            await session.commit()
         return
 
     try:
@@ -120,8 +146,13 @@ async def run_repair_loop(
 
             yield _log_event("iteration_start", {"iteration": iteration_num, "max": max_iters})
 
-            await db.refresh(submission)
-            if submission.is_cancelled:
+            async with get_session() as session:
+                submission_obj = (
+                    await session.execute(select(Submission).where(Submission.id == submission_id))
+                ).scalar_one()
+                await session.refresh(submission_obj)
+                is_cancelled = submission_obj.is_cancelled
+            if is_cancelled:
                 logger.warning(f"[{submission_id}] Repair CANCELLED by user.")
                 yield {"event": "log_line", "data": {"msg": "🛑 REPAIR CANCELLED."}}
                 yield {"event": "complete", "data": {"status": "cancelled", "iterations": iteration_num}}
@@ -161,6 +192,7 @@ async def run_repair_loop(
             patch_summary = ""
             boost_ctx = ""
             boost_component_type = "unknown"
+            plan_to_use = None
 
             compilation_clean = (classified_error.category == "none")
             # Force AI repair if: compile error, prior pest/mutation failure, or no test code yet
@@ -188,7 +220,8 @@ async def run_repair_loop(
                     boost_ctx += f"\n\n## Referenced Class Signatures (Zoom-In)\n{signatures}"
                 boost_ctx = placement_hint + boost_ctx
 
-                past_repairs = await context.get_similar_repairs(db, error_logs)
+                async with get_session() as session:
+                    past_repairs = await context.get_similar_repairs(session, error_logs)
                 yield {"event": "log_line", "data": {"msg": f"Context gathered — {boost_component_type} pattern detected"}}
 
                 escalation_ctx = escalation_service.build_escalation_context(previous_attempts)
@@ -200,10 +233,12 @@ async def run_repair_loop(
                     async for evt_type, evt_data in pipeline.run_pipeline(
                         code, structured_error_for_llm, boost_ctx, previous_attempts,
                         past_repairs, prompt, escalation_ctx, current_post_mortem,
-                        iteration_num=iteration_num
+                        iteration_num=iteration_num, max_iters=max_iters
                     ):
                         if evt_type == "final_result":
                             ai_resp, models = evt_data
+                        elif evt_type == "approved_plan":
+                            plan_to_use = evt_data
                         else:
                             yield _log_event(evt_type, evt_data)
                     logger.info(f"[{submission_id}] AI Pipeline completed in {int((time.monotonic() - t_start)*1000)}ms")
@@ -213,34 +248,54 @@ async def run_repair_loop(
                     err_msg = str(pipeline_exc)
                     logger.error(f"[{submission_id}] Iter {iteration_num} AI pipeline failed: {err_msg}")
                     yield _log_event("error", {"msg": f"AI pipeline failed: {err_msg}"})
-                    db.add(Iteration(
-                        submission_id=submission_id, iteration_num=iteration_num, code_input=code,
-                        error_logs=error_logs + f"\n\n[SYSTEM] AI pipeline failed: {err_msg}",
-                        ai_response='{"error": "pipeline_failed"}', status="failed",
-                        duration_ms=int((time.time() - start_time) * 1000),
-                        pipeline_logs=_safe_json_dumps(iteration_events),
-                    ))
-                    submission.total_iterations = iteration_num
-                    await db.commit()
+                    async with get_session() as session:
+                        session.add(Iteration(
+                            submission_id=submission_id, iteration_num=iteration_num, code_input=code,
+                            error_logs=error_logs + f"\n\n[SYSTEM] AI pipeline failed: {err_msg}",
+                            ai_response='{"error": "pipeline_failed"}', status="failed",
+                            duration_ms=int((time.time() - start_time) * 1000),
+                            pipeline_logs=_safe_json_dumps(iteration_events),
+                        ))
+                        submission_obj = (
+                            await session.execute(select(Submission).where(Submission.id == submission_id))
+                        ).scalar_one()
+                        submission_obj.total_iterations = iteration_num
+                        await session.commit()
                     previous_attempts.append({"diagnosis": "Pipeline Failure", "outcome": "failed",
                                               "failure_reason": "pipeline_error", "action": "execute_plan"})
                     yield _log_event("iteration_complete", {"num": iteration_num, "success": False})
                     continue
 
-                if not ai_resp or not ai_resp.patches:
-                    yield _log_event("error", {"msg": "AI returned zero patches."})
-                    db.add(Iteration(
-                        submission_id=submission_id, iteration_num=iteration_num, code_input=code,
-                        error_logs=error_logs + "\n\n[SYSTEM] AI returned zero patches.",
-                        ai_response=ai_resp.raw if ai_resp else "", status="failed",
-                        duration_ms=int((time.time() - start_time) * 1000),
-                        pipeline_logs=_safe_json_dumps(iteration_events),
-                    ))
-                    submission.total_iterations = iteration_num
-                    await db.commit()
+                is_aborted = ai_resp and "aborted" in str(ai_resp.thought_process).lower()
+                is_mutation_gap = bool(previous_attempts and previous_attempts[-1].get("failure_reason") == "mutation_failed")
+                if not ai_resp or (not ai_resp.patches and not is_mutation_gap) or is_aborted:
+                    msg = "AI returned zero patches."
+                    failure_reason = "pipeline_error"
+                    if is_aborted:
+                        msg = f"🛑 [ABORTED] The pipeline has terminated the run early: {ai_resp.diagnosis}"
+                        failure_reason = "aborted"
+                    yield _log_event("error", {"msg": msg})
+                    async with get_session() as session:
+                        session.add(Iteration(
+                            submission_id=submission_id, iteration_num=iteration_num, code_input=code,
+                            error_logs=error_logs + f"\n\n[SYSTEM] {msg}",
+                            ai_response=ai_resp.raw if ai_resp else "", status="failed",
+                            duration_ms=int((time.time() - start_time) * 1000),
+                            pipeline_logs=_safe_json_dumps(iteration_events),
+                            failure_reason=failure_reason,
+                        ))
+                        submission_obj = (
+                            await session.execute(select(Submission).where(Submission.id == submission_id))
+                        ).scalar_one()
+                        submission_obj.total_iterations = iteration_num
+                        submission_obj.status = "failed"
+                        submission_obj.error_summary = msg
+                        await session.commit()
+                    if is_aborted:
+                        break
                     previous_attempts.append({"diagnosis": ai_resp.diagnosis if ai_resp else "N/A",
-                                              "outcome": "failed", "failure_reason": "pipeline_error",
-                                              "action": "execute_plan"})
+                                               "outcome": "failed", "failure_reason": "pipeline_error",
+                                               "action": "execute_plan"})
                     continue
 
                 yield _log_event("ai_thinking", {"diagnosis": ai_resp.diagnosis, "fix_description": ""})
@@ -251,21 +306,22 @@ async def run_repair_loop(
                         p.replacement = p.replacement.replace("?>", "").replace("```php", "").replace("```", "").strip()
 
                 try:
-                    apply_res = await patch_service.apply_all(container_id, ai_resp.patches)
+                    apply_res = await patch_service.apply_all(container_id, ai_resp.patches) if ai_resp.patches else {}
                     logger.info(f"[{submission_id}] Patches: {sum(v for v in apply_res.values())} ok, {sum(not v for v in apply_res.values())} failed.")
                 except patch_service.PatchApplicationError as pae:
                     logger.error(f"[{submission_id}] {pae}")
                     yield _log_event("patch_skipped", {"reason": str(pae)})
-                    db.add(Iteration(
-                        submission_id=submission_id, iteration_num=iteration_num, code_input=code,
-                        error_logs=error_logs + f"\n\n[PATCH FAILED] {pae}", ai_response=ai_resp.raw,
-                        status="failed", failure_reason="patch_failed", failure_details=str(pae)[:500],
-                        duration_ms=int((time.time() - start_time) * 1000),
-                        pipeline_logs=_safe_json_dumps(iteration_events),
-                    ))
+                    async with get_session() as session:
+                        session.add(Iteration(
+                            submission_id=submission_id, iteration_num=iteration_num, code_input=code,
+                            error_logs=error_logs + f"\n\n[PATCH FAILED] {pae}", ai_response=ai_resp.raw,
+                            status="failed", failure_reason="patch_failed", failure_details=str(pae)[:500],
+                            duration_ms=int((time.time() - start_time) * 1000),
+                            pipeline_logs=_safe_json_dumps(iteration_events),
+                        ))
+                        await session.commit()
                     previous_attempts.append({"diagnosis": ai_resp.diagnosis, "outcome": "failed",
                                               "failure_reason": "patch_failed", "action": "execute_plan"})
-                    await db.commit()
                     yield _log_event("iteration_complete", {"num": iteration_num, "success": False})
                     continue
 
@@ -276,7 +332,7 @@ async def run_repair_loop(
                     else:
                         yield _log_event("patch_skipped", {"path": path})
 
-                if not any(apply_res.values()):
+                if ai_resp.patches and not any(apply_res.values()):
                     yield _log_event("error", {"msg": "All patches failed to apply."})
                     break
 
@@ -309,6 +365,9 @@ async def run_repair_loop(
                     migrate_res = await _docker_mig.execute(sandbox.get_container(container_id), "php /var/www/sandbox/artisan migrate:fresh --force", timeout=20)
                     logger.info(f"[{submission_id}] Migration stdout: {migrate_res.stdout} stderr: {migrate_res.stderr}")
                     yield _log_event("log_line", {"msg": f"Migration completed with exit code {migrate_res.exit_code}"})
+                    # Bust the Boost context cache so the next iteration sees the updated schema
+                    boost_service._cache.clear()
+                    logger.info(f"[{submission_id}] Boost context cache cleared after migration.")
 
                 from api.services.sandbox import docker as _docker2
                 await _docker2.execute(sandbox.get_container(container_id), "rm -f /submitted/code.php", timeout=3)
@@ -319,60 +378,85 @@ async def run_repair_loop(
                 ])
 
                 # PHPStan gate
+                phpstan_failed = False
                 for path in (p for p, ok in apply_res.items() if ok and p.endswith(".php")):
                     stan_res = await sandbox.run_phpstan(container, path)
                     logger.info(f"[{submission_id}] PHPStan ({path}): {'OK' if stan_res['success'] else 'FAIL'}")
                     yield _log_event("phpstan_result", {"path": path, "success": stan_res["success"], "output": stan_res["output"]})
                     if not stan_res["success"]:
                         error_logs += f"\n\nPHPSTAN ({path}):\n{stan_res['output']}"
-
-                # Generate Pest test from AI output
-                cleaned_pest = ai_resp.pest_test.replace("?>", "").replace("```php", "").replace("```", "").strip() if ai_resp.pest_test else ""
-                if not cleaned_pest and last_pest_code:
-                    logger.info(f"[{submission_id}] AI returned empty pest_test — reusing last_pest_code from previous iteration.")
-                    pest_code = last_pest_code
-                else:
-                    pest_code = sandbox.prepare_pest_test(cleaned_pest, class_info.fqcn)
-
-                # Pre-flight lint the pest test
-                preflight_path = "tests/Feature/PestPreflightTest.php"
-                await sandbox.write_file(container, preflight_path, pest_code)
-                lint_ok, lint_msg = await sandbox.lint_php(container, preflight_path)
-                if not lint_ok:
-                    error_logs += f"\n\nPEST SYNTAX ERROR:\n{lint_msg}"
-                    try:
-                        pm_res = await ai_service.get_post_mortem(
-                            code, [{"action": p.action, "path": p.target} for p in ai_resp.patches],
-                            f"Pest test syntax error:\n{lint_msg}",
-                            await sandbox.capture_laravel_log(container), boost_ctx, failure_reason="syntax_error"
-                        )
-                        pm_cat, pm_strat = pm_res.category, pm_res.strategy
-                        current_post_mortem = f"Analysis: {pm_res.analysis}\nStrategy: {pm_res.strategy}"
-                    except Exception:
-                        pm_cat, pm_strat = "test", "Generate syntactically valid Pest test code"
-                    db.add(Iteration(
-                        submission_id=submission_id, iteration_num=iteration_num, code_input=code,
-                        error_logs=error_logs, ai_response=ai_resp.raw, patch_applied=patch_summary,
-                        pest_test_code=pest_code, status="failed", failure_reason="test_syntax_error",
-                        failure_details=f"Pest syntax: {lint_msg}", pm_category=pm_cat, pm_strategy=pm_strat,
-                        duration_ms=int((time.time() - start_time) * 1000),
-                        pipeline_logs=_safe_json_dumps(iteration_events),
-                    ))
+                        phpstan_failed = True
+                
+                if phpstan_failed:
+                    logger.warning(f"[{submission_id}] PHPStan failed — skipping Pest and looping to next iteration.")
+                    async with get_session() as session:
+                        session.add(Iteration(
+                            submission_id=submission_id, iteration_num=iteration_num, code_input=code,
+                            error_logs=error_logs, ai_response=ai_resp.raw, patch_applied=patch_summary,
+                            status="failed", failure_reason="phpstan_failed",
+                            duration_ms=int((time.time() - start_time) * 1000),
+                            pipeline_logs=_safe_json_dumps(iteration_events),
+                        ))
+                        await session.commit()
                     previous_attempts.append({"diagnosis": ai_resp.diagnosis, "outcome": "failed",
-                                              "failure_reason": "test_syntax_error", "action": "execute_plan"})
+                                              "failure_reason": "phpstan_failed", "action": "execute_plan"})
                     yield _log_event("iteration_complete", {"num": iteration_num, "success": False})
-                    await db.commit()
                     continue
 
-                yield _log_event("log_line", {"msg": "Running Pest functional tests..."})
-                t_pest = time.monotonic()
-                if not pest_code:
-                    # Guard: never run pest with an empty test file — mark as failure
-                    pest_res = {"success": False, "output": "[SYSTEM] AI generated no Pest test code — treating as failure."}
-                    logger.warning(f"[{submission_id}] AI returned empty pest_test — marking iteration as failed.")
+                # Pre-flight lint the pest test (skip if partial batch)
+                if getattr(ai_resp, "is_partial_batch", False):
+                    pest_code = ""
+                    pest_res = {"success": True, "output": "[BATCH MODE] Intermediate batch applied. Bypassing functional tests."}
+                    yield _log_event("log_line", {"msg": "📦 Intermediate batch successfully applied. Bypassing Pest functional tests."})
                 else:
-                    pest_res = await sandbox.run_pest_test(container, pest_code)
-                logger.info(f"[{submission_id}] Pest took {int((time.monotonic() - t_pest)*1000)}ms")
+                    # Generate Pest test from AI output
+                    cleaned_pest = ai_resp.pest_test.replace("?>", "").replace("```php", "").replace("```", "").strip() if ai_resp.pest_test else ""
+                    if not cleaned_pest and last_pest_code:
+                        logger.info(f"[{submission_id}] AI returned empty pest_test — reusing last_pest_code from previous iteration.")
+                        pest_code = last_pest_code
+                    else:
+                        pest_code = sandbox.prepare_pest_test(cleaned_pest, class_info.fqcn)
+
+                    # Pre-flight lint the pest test
+                    preflight_path = "tests/Feature/PestPreflightTest.php"
+                    await sandbox.write_file(container, preflight_path, pest_code)
+                    lint_ok, lint_msg = await sandbox.lint_php(container, preflight_path)
+                    if not lint_ok:
+                        error_logs += f"\n\nPEST SYNTAX ERROR:\n{lint_msg}"
+                        try:
+                            pm_res = await ai_service.get_post_mortem(
+                                code, [{"action": p.action, "path": p.target} for p in ai_resp.patches],
+                                f"Pest test syntax error:\n{lint_msg}",
+                                await sandbox.capture_laravel_log(container), boost_ctx, failure_reason="syntax_error"
+                            )
+                            pm_cat, pm_strat = pm_res.category, pm_res.strategy
+                            current_post_mortem = f"Analysis: {pm_res.analysis}\nCategory: {pm_res.category}\nStrategy: {pm_res.strategy}"
+                        except Exception:
+                            pm_cat, pm_strat = "test", "Generate syntactically valid Pest test code"
+                        async with get_session() as session:
+                            session.add(Iteration(
+                                submission_id=submission_id, iteration_num=iteration_num, code_input=code,
+                                error_logs=error_logs, ai_response=ai_resp.raw, patch_applied=patch_summary,
+                                pest_test_code=pest_code, status="failed", failure_reason="test_syntax_error",
+                                failure_details=f"Pest syntax: {lint_msg}", pm_category=pm_cat, pm_strategy=pm_strat,
+                                duration_ms=int((time.time() - start_time) * 1000),
+                                pipeline_logs=_safe_json_dumps(iteration_events),
+                            ))
+                            await session.commit()
+                        previous_attempts.append({"diagnosis": ai_resp.diagnosis, "outcome": "failed",
+                                                  "failure_reason": "test_syntax_error", "action": "execute_plan"})
+                        yield _log_event("iteration_complete", {"num": iteration_num, "success": False})
+                        continue
+
+                    yield _log_event("log_line", {"msg": "Running Pest functional tests..."})
+                    t_pest = time.monotonic()
+                    if not pest_code:
+                        # Guard: never run pest with an empty test file — mark as failure
+                        pest_res = {"success": False, "output": "[SYSTEM] AI generated no Pest test code — treating as failure."}
+                        logger.warning(f"[{submission_id}] AI returned empty pest_test — marking iteration as failed.")
+                    else:
+                        pest_res = await sandbox.run_pest_test(container, pest_code)
+                    logger.info(f"[{submission_id}] Pest took {int((time.monotonic() - t_pest)*1000)}ms")
 
             # ── PATH B: Compilation already clean → run AI-generated test ────
             else:
@@ -394,16 +478,19 @@ async def run_repair_loop(
                     except (json.JSONDecodeError, AttributeError):
                         boost_ctx = boost_ctx_raw
                     boost_ctx = placement_hint + boost_ctx
-                    past_repairs = await context.get_similar_repairs(db, error_logs)
+                    async with get_session() as session:
+                        past_repairs = await context.get_similar_repairs(session, error_logs)
                     escalation_ctx = escalation_service.build_escalation_context(previous_attempts)
                     try:
                         async for evt_type, evt_data in pipeline.run_pipeline(
                             code, structured_error_for_llm, boost_ctx, previous_attempts,
                             past_repairs, prompt, escalation_ctx, current_post_mortem,
-                            iteration_num=iteration_num
+                            iteration_num=iteration_num, max_iters=max_iters
                         ):
                             if evt_type == "final_result":
                                 ai_resp, models = evt_data
+                            elif evt_type == "approved_plan":
+                                plan_to_use = evt_data
                             else:
                                 yield _log_event(evt_type, evt_data)
                     except Exception as pipeline_exc:
@@ -452,7 +539,7 @@ async def run_repair_loop(
                         pest_res["output"], await sandbox.capture_laravel_log(container),
                         boost_ctx, failure_reason="pest_failed"
                     )
-                    current_post_mortem = f"Analysis: {pm_res.analysis}\nStrategy: {pm_res.strategy}"
+                    current_post_mortem = f"Analysis: {pm_res.analysis}\nCategory: {pm_res.category}\nStrategy: {pm_res.strategy}"
                     pm_category, pm_strategy = pm_res.category, pm_res.strategy
                     yield _log_event("log_line", {"msg": f"Critic Analysis: {pm_res.category}"})
                 except Exception as pm_exc:
@@ -460,7 +547,7 @@ async def run_repair_loop(
 
             # Mutation gate
             mutation_score = None
-            if pest_res["success"] and kwargs.get("use_mutation_gate", True):
+            if pest_res["success"] and kwargs.get("use_mutation_gate", True) and not getattr(ai_resp, "is_partial_batch", False):
                 yield _log_event("log_line", {"msg": "Pest passed. Running Mutation Gate..."})
                 t_mut = time.monotonic()
                 mutation_res = await sandbox.run_mutation_test(container)
@@ -471,14 +558,29 @@ async def run_repair_loop(
                     failure_details = f"Score: {mutation_score}%"
                     error_logs += f"\n\nMUTATION GATE FAILURE (Score: {mutation_score}%):\n{mutation_res.output}"
                     try:
+                        # Pass the patched file content, not the original broken code,
+                        # so the critic evaluates the correct (fixed) state when diagnosing test gaps.
+                        _patched_code = code
+                        if ai_resp and ai_resp.patches:
+                            _first_ok_patch = next(
+                                (p for p in ai_resp.patches if apply_res.get(p.target or p.filename, False)),
+                                None
+                            )
+                            if _first_ok_patch:
+                                try:
+                                    _patched_code = await sandbox.read_file(
+                                        container, _first_ok_patch.target or _first_ok_patch.filename
+                                    )
+                                except Exception:
+                                    pass  # fall back to original code
                         pm_res = await ai_service.get_post_mortem(
-                            code,
+                            _patched_code,
                             [{"action": p.action, "path": p.target} for p in ai_resp.patches] if ai_resp else [],
                             f"Mutation Gate Failed with score {mutation_score}%.\n{mutation_res.output}",
                             await sandbox.capture_laravel_log(container), boost_ctx,
                             failure_reason="mutation_failed"
                         )
-                        current_post_mortem = f"Analysis: {pm_res.analysis}\nStrategy: {pm_res.strategy}"
+                        current_post_mortem = f"Analysis: {pm_res.analysis}\nCategory: {pm_res.category}\nStrategy: {pm_res.strategy}"
                         pm_category, pm_strategy = pm_res.category, pm_res.strategy
                         yield _log_event("log_line", {"msg": f"Critic Analysis (Mutation): {pm_res.category}"})
                     except Exception as pm_exc:
@@ -491,7 +593,7 @@ async def run_repair_loop(
             # Evaluate final outcome
             success = pest_res["success"] and (
                 mutation_score is None or mutation_score >= settings.mutation_score_threshold
-            )
+            ) and not getattr(ai_resp, "is_partial_batch", False)
             it_status = "success" if success else "failed"
 
             logger.info(
@@ -501,29 +603,31 @@ async def run_repair_loop(
                 f"Models: {json.dumps(models)}"
             )
 
-            db.add(Iteration(
-                submission_id=submission_id,
-                iteration_num=iteration_num,
-                code_input=code,
-                error_logs=error_logs,
-                ai_response=ai_resp.raw if ai_resp else "N/A",
-                ai_prompt=getattr(ai_resp, "prompt", "") if ai_resp else "",
-                patch_applied=patch_summary,
-                pest_test_code=pest_code,
-                pest_test_result=pest_res.get("output", "")[:2000],
-                planner_model=models.get("planner"),
-                executor_model=models.get("executor"),
-                reviewer_model=models.get("reviewer"),
-                mutation_score=mutation_score,
-                boost_context=boost_ctx[:2000] if boost_ctx else None,
-                status=it_status,
-                duration_ms=int((time.time() - start_time) * 1000),
-                failure_reason=failure_reason,
-                failure_details=failure_details,
-                pm_category=pm_category,
-                pm_strategy=pm_strategy,
-                pipeline_logs=_safe_json_dumps(iteration_events),
-            ))
+            async with get_session() as session:
+                session.add(Iteration(
+                    submission_id=submission_id,
+                    iteration_num=iteration_num,
+                    code_input=code,
+                    error_logs=error_logs,
+                    ai_response=ai_resp.raw if ai_resp else "N/A",
+                    ai_prompt=getattr(ai_resp, "prompt", "") if ai_resp else "",
+                    patch_applied=patch_summary,
+                    pest_test_code=pest_code,
+                    pest_test_result=pest_res.get("output", "")[:2000],
+                    planner_model=models.get("planner"),
+                    executor_model=models.get("executor"),
+                    reviewer_model=models.get("reviewer"),
+                    mutation_score=mutation_score,
+                    boost_context=boost_ctx[:2000] if boost_ctx else None,
+                    status=it_status,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                    failure_reason=failure_reason,
+                    failure_details=failure_details,
+                    pm_category=pm_category,
+                    pm_strategy=pm_strategy,
+                    pipeline_logs=_safe_json_dumps(iteration_events),
+                ))
+                await session.commit()
 
             previous_attempts.append({
                 "diagnosis": ai_resp.diagnosis if ai_resp else "N/A",
@@ -535,50 +639,77 @@ async def run_repair_loop(
                 "pm_strategy": pm_strategy,
                 "fix_description": ai_resp.fix_description if ai_resp else "",
                 "action": "execute_plan",
+                "is_partial_batch": getattr(ai_resp, "is_partial_batch", False),
+                "approved_plan": plan_to_use,
             })
 
             yield _log_event("iteration_complete", {"num": iteration_num, "success": success})
 
             if success:
-                submission.status = "success"
-                if primary_target_file:
-                    submission.final_code = await sandbox.read_file(container, primary_target_file)
-                elif ai_resp and ai_resp.patches:
-                    submission.final_code = await sandbox.read_file(container, ai_resp.patches[0].target)
-                else:
-                    submission.final_code = code
-                if ai_resp:
-                    await context.store_repair_success(db, error_logs, ai_resp, iteration_num)
-                submission.total_iterations = iteration_num
-                await db.commit()
+                async with get_session() as session:
+                    submission_obj = (
+                        await session.execute(select(Submission).where(Submission.id == submission_id))
+                    ).scalar_one()
+                    submission_obj.status = "success"
+                    if primary_target_file:
+                        submission_obj.final_code = await sandbox.read_file(container, primary_target_file)
+                    elif ai_resp and ai_resp.patches:
+                        submission_obj.final_code = await sandbox.read_file(container, ai_resp.patches[0].target)
+                    else:
+                        submission_obj.final_code = code
+                    if ai_resp:
+                        await context.store_repair_success(session, error_logs, ai_resp, iteration_num)
+                    submission_obj.total_iterations = iteration_num
+                    await session.commit()
                 yield _log_event("log_line", {"msg": "✅ JOB DONE: Success! All tests passed and mutation gate satisfied."})
                 yield _log_event("complete", {"status": "success", "iterations": iteration_num, "mutation_score": mutation_score})
                 return
 
-            submission.total_iterations = iteration_num
-            await db.commit()
+            async with get_session() as session:
+                submission_obj = (
+                    await session.execute(select(Submission).where(Submission.id == submission_id))
+                ).scalar_one()
+                submission_obj.total_iterations = iteration_num
+                await session.commit()
 
         # Loop exhausted
         try:
-            submission.status = "failed"
-            await db.commit()
+            async with get_session() as session:
+                submission_obj = (
+                    await session.execute(select(Submission).where(Submission.id == submission_id))
+                ).scalar_one()
+                submission_obj.status = "failed"
+                await session.commit()
         except Exception:
-            await db.rollback()
+            pass
         yield {"event": "log_line", "data": {"msg": "❌ JOB DONE: Failed. Max iterations reached without a stable fix."}}
         yield {"event": "complete", "data": {"status": "failed", "iterations": max_iters, "mutation_score": None}}
 
     except Exception as e:
-        await db.rollback()
-        await db.refresh(submission)
-        if submission.is_cancelled:
+        is_cancelled = False
+        try:
+            async with get_session() as session:
+                submission_obj = (
+                    await session.execute(select(Submission).where(Submission.id == submission_id))
+                ).scalar_one()
+                await session.refresh(submission_obj)
+                is_cancelled = submission_obj.is_cancelled
+        except Exception:
+            pass
+
+        if is_cancelled:
             logger.info(f"[{submission_id}] Orchestrator caught termination of cancelled job.")
             yield {"event": "complete", "data": {"status": "cancelled", "iterations": locals().get('iteration_num', 0)}}
         else:
             logger.exception(f"[{submission_id}] Fatal error: {e}")
             try:
-                submission.status = "failed"
-                submission.error_summary = str(e)
-                await db.commit()
+                async with get_session() as session:
+                    submission_obj = (
+                        await session.execute(select(Submission).where(Submission.id == submission_id))
+                    ).scalar_one()
+                    submission_obj.status = "failed"
+                    submission_obj.error_summary = str(e)
+                    await session.commit()
             except Exception:
                 pass
             yield {"event": "error", "data": {"msg": str(e)}}

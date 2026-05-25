@@ -112,7 +112,6 @@ class TestOrchestrator:
             route_resource="a"
         )
 
-    @pytest.mark.skip(reason="Mock setup issues with AsyncMock return values")
     async def test_success_path(self, mock_db, orchestrator_mocks):
         orchestrator_mocks["sandbox"].create_sandbox.return_value = "container-id"
         orchestrator_mocks["sandbox"].execute_code.return_value = {"output": "This is a sufficiently long error message to bypass the small-length skip check.", "exit_code": 1}
@@ -163,7 +162,6 @@ class TestOrchestrator:
         comp = [e for e in events if e["event"] == "complete"][0]
         assert comp["data"]["status"] == "failed"
 
-    @pytest.mark.skip(reason="Mock setup issues with circular references in pytest")
     async def test_pest_syntax_error_retry(self, mock_db, orchestrator_mocks):
         orchestrator_mocks["sandbox"].create_sandbox.return_value = "cid"
         orchestrator_mocks["sandbox"].execute_code.return_value = {"output": "Err" * 100, "exit_code": 1}
@@ -246,3 +244,40 @@ class TestOrchestrator:
         comp = [e for e in events if e["event"] == "complete"]
         assert len(comp) > 0
         assert comp[0]["data"]["status"] == "cancelled"
+
+    async def test_orchestrator_partial_batch(self, mock_db, orchestrator_mocks):
+        """When is_partial_batch is True, the orchestrator should bypass functional Pest and Mutation tests, and set iteration success to False."""
+        orchestrator_mocks["sandbox"].create_sandbox.return_value = "cid"
+        orchestrator_mocks["sandbox"].execute_code.return_value = {"output": "Err" * 100, "exit_code": 1}
+        orchestrator_mocks["classifier"].return_value = ClassifiedError("UNKNOWN", "sum", {}, "")
+
+        ai_resp = self._make_ai_resp([PatchSpec("full_replace", "app/A.php", "r", "A.php")])
+        ai_resp.is_partial_batch = True
+        
+        async def mock_run_pipeline(*args, **kwargs):
+            yield "final_result", (ai_resp, {})
+        orchestrator_mocks["pipeline"].run_pipeline.side_effect = mock_run_pipeline
+        orchestrator_mocks["sandbox"].detect_class_info.return_value = self._make_class_info()
+        orchestrator_mocks["sandbox"].lint_php.return_value = (True, "")
+        orchestrator_mocks["patch_service"].apply_all.return_value = {"app/A.php": True}
+        
+        # We set mock return values for Pest and Mutation to ensure they would NOT be run
+        # but if they were called, we can assert on them.
+        orchestrator_mocks["sandbox"].run_pest_test.return_value = {"success": True, "output": "OK"}
+        orchestrator_mocks["sandbox"].run_mutation_test.return_value = MagicMock(passed=True, score=100)
+        
+        orchestrator_mocks["boost"].get_boost_context.return_value = "{}"
+        orchestrator_mocks["context"].get_similar_repairs.return_value = []
+
+        events = await self._collect_events(run_repair_loop("test-id", "code", "p", mock_db, max_iterations=1))
+
+        # Verify that Pest functional test execution was not called
+        orchestrator_mocks["sandbox"].run_pest_test.assert_not_called()
+        # Verify that Mutation test was not called
+        orchestrator_mocks["sandbox"].run_mutation_test.assert_not_called()
+
+        # Verify iteration success is False
+        it_completes = [e for e in events if e["event"] == "iteration_complete"]
+        assert len(it_completes) == 1
+        assert it_completes[0]["data"]["success"] is False
+

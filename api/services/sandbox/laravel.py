@@ -57,7 +57,7 @@ async def detect_class_info(container) -> ClassInfo:
 
 async def setup_sqlite(container) -> None:
     """Configure container for internal SQLite usage and ensure base classes exist."""
-    sh_script = """#!/bin/bash
+    sh_script = r"""#!/bin/bash
 # 1. Setup SQLite
 touch /var/www/sandbox/database/database.sqlite
 chmod 666 /var/www/sandbox/database/database.sqlite
@@ -74,6 +74,19 @@ namespace App\Http\Controllers;
 abstract class Controller { }
 EOF
 fi
+
+# 3. Create phpstan.neon configuration to ignore Laravel magic method false positives
+cat << 'EOF' > /var/www/sandbox/phpstan.neon
+parameters:
+    level: 5
+    ignoreErrors:
+        - '#Call to an undefined static method App\\Models\\.*#'
+        - '#Access to an undefined property .*::\$id#'
+        - '#Access to an undefined property App\\Models\\.*#'
+        - '#Call to an undefined method .*::comments\(\)#'
+        - '#Call to an undefined method Illuminate\\Database\\Eloquent\\.*#'
+EOF
+chmod 666 /var/www/sandbox/phpstan.neon
 """
     await docker.copy_file(container, "/var/www/sandbox/tmp/setup_sqlite.sh", sh_script)
     await docker.execute(container, "bash /var/www/sandbox/tmp/setup_sqlite.sh", timeout=30, user="root")

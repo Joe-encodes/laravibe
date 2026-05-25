@@ -125,6 +125,21 @@ async def _fetch_boost_context(container, error_text: str) -> BoostContext:
         except Exception as e:
             logger.warning(f"Failed to parse db:show json: {e}")
 
+    # 1.6 Query Migration Files
+    mig_files_res = await docker_service.execute(
+        container,
+        "php -r \"echo json_encode(glob('database/migrations/*.php'));\" 2>&1",
+        timeout=10,
+    )
+    if mig_files_res.exit_code == 0:
+        try:
+            import posixpath
+            paths = json.loads(mig_files_res.stdout)
+            if paths:
+                schema_info += "\n\n### EXISTING MIGRATION FILES\n" + "\n".join(f"- database/migrations/{posixpath.basename(p)}" for p in paths)
+        except Exception as e:
+            logger.warning(f"Failed to parse migration files: {e}")
+
     # 2. Query App Environment/Packages
     about_result = await docker_service.execute(
         container,

@@ -87,20 +87,18 @@ async def _run_repair_background(
     use_mutation_gate: bool,
 ) -> None:
     """Background task: runs the repair loop and pushes events to the SSE queue."""
-    from api.database import AsyncSessionLocal
     import traceback as _tb
     try:
-        async with AsyncSessionLocal() as db:
-            async for event in run_repair_loop(
-                submission_id=submission_id,
-                code=code,
-                prompt=prompt,
-                db=db,
-                max_iterations=max_iterations,
-                use_boost=use_boost,
-                use_mutation_gate=use_mutation_gate,
-            ):
-                _event_queues.setdefault(submission_id, []).append(event)
+        async for event in run_repair_loop(
+            submission_id=submission_id,
+            code=code,
+            prompt=prompt,
+            db=None,
+            max_iterations=max_iterations,
+            use_boost=use_boost,
+            use_mutation_gate=use_mutation_gate,
+        ):
+            _event_queues.setdefault(submission_id, []).append(event)
     except Exception as exc:
         # Ensure the submission is never left stuck in "pending".
         err_msg = str(exc)

@@ -146,12 +146,16 @@ def build_escalation_context(previous_attempts: list[dict]) -> str:
     if last_attempt.get("failure_reason") == "mutation_failed":
         mutation_details = last_attempt.get("failure_details", "")
         context += (
-            f"CRITICAL - MUTATION GATE FAILED: {mutation_details}\n"
-            "Your code passed the functional test but is too brittle. "
-            "To pass mutation testing, you MUST:\n"
-            "  - Use GENERAL logic instead of hardcoded values\n"
-            "  - Avoid specific equality checks like `$id == 5` unless absolutely required\n"
-            "  - Ensure the logic handles multiple scenarios\n\n"
+            f"CRITICAL \u2014 MUTATION GATE FAILED ({mutation_details}).\n"
+            "The application code is CORRECT. DO NOT change the controller or model logic.\n"
+            "The ONLY fix required is a stronger Pest test suite. You MUST rewrite the "
+            "<pest_test> block with these specific mutation-killing assertions:\n"
+            "  1. assertJsonPath('field', $specificValue) on every store/update/show response \u2014 kills return-value mutations.\n"
+            "  2. assertJsonValidationErrors(['field']) for EACH required field in a SEPARATE it() block \u2014 kills per-field removal mutations.\n"
+            "  3. assertDatabaseMissing(table, ['field' => $oldValue]) on update tests \u2014 kills swap mutations.\n"
+            "  4. assertSoftDeleted() AND a follow-up getJson(show URL)->assertStatus(404) \u2014 kills skip-delete mutations.\n"
+            "  5. assertJsonCount(N) AND assertJsonPath('0.field', $specificValue) on index \u2014 count alone does NOT kill return-value mutations.\n"
+            "DO NOT emit any <file> blocks for the controller or model. ONLY output a new <pest_test> block.\n\n"
         )
 
     return context.strip()

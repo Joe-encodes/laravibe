@@ -152,7 +152,7 @@ def classify_error(error_logs: str) -> ClassifiedError:
 
     # ── MISSING IMPORT / CLASS NOT FOUND ──────────────────────────────────────
     m = re.search(
-        r"(?:Class|Interface)\s+'?([\\A-Za-z0-9_]+)'?\s+not found",
+        r"(?:Class|Interface|Trait)\s+[\"']?([\\A-Za-z0-9_]+)[\"']?\s+not found",
         error_logs,
         re.IGNORECASE
     )

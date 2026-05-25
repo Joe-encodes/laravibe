@@ -43,7 +43,10 @@ async def run_phpstan(container, path: str) -> dict:
     """Run PHPStan Level 5 analysis."""
     cmd = f"cd /var/www/sandbox && ./vendor/bin/phpstan analyze {shlex.quote(path)} --level=5 --no-progress --error-format=raw"
     res = await docker.execute(container, cmd, timeout=30)
-    return {"success": res.exit_code == 0, "output": res.stdout}
+    output = res.stdout
+    if res.stderr:
+        output += "\n" + res.stderr
+    return {"success": res.exit_code == 0, "output": output}
 
 async def run_mutation_test(container) -> MutationResult:
     """Execute and parse Pest mutation tests."""
