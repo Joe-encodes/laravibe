@@ -21,8 +21,13 @@ from api.models import Submission, Iteration, RepairSummary
 # access to the values within the .ini file in use.
 config = context.config
 
-# Dynamically set the sqlalchemy.url from settings
+# Dynamically set the sqlalchemy.url from settings, ensuring an async driver is used
 db_url = get_settings().database_url
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+elif db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql+asyncpg://")
+
 config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.

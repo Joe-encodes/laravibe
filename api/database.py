@@ -29,6 +29,10 @@ def get_engine():
     if _engine is None:
         settings = get_settings()
         db_url = settings.database_url
+        if db_url.startswith("postgresql://"):
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+        elif db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql+asyncpg://")
         
         is_sqlite = db_url.startswith("sqlite")
         
