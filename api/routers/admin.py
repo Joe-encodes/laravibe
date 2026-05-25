@@ -99,3 +99,42 @@ async def get_evaluations(
     except Exception as exc:
         logger.error(f"[Admin] evaluations query failed: {exc}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve evaluations.")
+
+
+@router.get("/system-logs")
+async def get_system_logs(
+    log_name: str = "repair_platform.log",
+    lines: int = 200,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Returns the last N lines of a system log file from the logs/ directory.
+    Requires authentication.
+    """
+    import os
+    from pathlib import Path
+    
+    # Safe validation of log path
+    logs_dir = Path("logs")
+    log_file = (logs_dir / log_name).resolve()
+    
+    # Security check: ensure it is inside the logs directory
+    if not str(log_file).startswith(str(logs_dir.resolve())):
+        raise HTTPException(status_code=403, detail="Access denied to requested file.")
+        
+    if not log_file.exists() or not log_file.is_file():
+        raise HTTPException(status_code=404, detail=f"Log file '{log_name}' not found.")
+        
+    try:
+        with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            all_lines = f.readlines()
+            last_lines = all_lines[-lines:] if lines > 0 else all_lines
+            return {
+                "file": log_name,
+                "total_lines": len(all_lines),
+                "returned_lines": len(last_lines),
+                "content": "".join(last_lines),
+            }
+    except Exception as exc:
+        logger.error(f"[Admin] Failed to read log file {log_name}: {exc}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to read log file: {exc}")
