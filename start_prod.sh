@@ -16,34 +16,38 @@ echo ">>> Starting LaraVibe in PRODUCTION mode on port $PORT"
 mkdir -p data logs
 
 # 3. Background Infrastructure Setup
-echo ">>> Launching infrastructure in background..."
-(
-    # Docker Daemon Startup (DinD)
-    echo ">>> Starting Docker daemon..."
-    # We use vfs driver because overlay2 often fails in nested containers on cloud hosts
-    dockerd --storage-driver=vfs 2>&1 | tee logs/docker.log &
+if [ "$DISABLE_DOCKER" = "true" ]; then
+    echo ">>> DISABLE_DOCKER is set to true. Skipping Docker daemon and sandbox image build."
+else
+    echo ">>> Launching infrastructure in background..."
+    (
+        # Docker Daemon Startup (DinD)
+        echo ">>> Starting Docker daemon..."
+        # We use vfs driver because overlay2 often fails in nested containers on cloud hosts
+        dockerd --storage-driver=vfs 2>&1 | tee logs/docker.log &
 
-    # Wait for Docker to be ready
-    echo ">>> Waiting for Docker to wake up..."
-    TIMEOUT=60
-    while ! docker info > /dev/null 2>&1; do
-        TIMEOUT=$((TIMEOUT - 1))
-        if [ "$TIMEOUT" -le 0 ]; then
-            echo "!!! ERROR: Docker daemon failed to start. Check logs/docker.log"
-            exit 1
+        # Wait for Docker to be ready
+        echo ">>> Waiting for Docker to wake up..."
+        TIMEOUT=60
+        while ! docker info > /dev/null 2>&1; do
+            TIMEOUT=$((TIMEOUT - 1))
+            if [ "$TIMEOUT" -le 0 ]; then
+                echo "!!! ERROR: Docker daemon failed to start. Check logs/docker.log"
+                exit 1
+            fi
+            sleep 1
+        done
+
+        echo ">>> Docker is alive. Starting background sandbox preparation..."
+        if ! docker image inspect laravel-sandbox:latest > /dev/null 2>&1; then
+            echo ">>> [Background] Sandbox image missing. Starting build (~10 mins)..."
+            docker build -t laravel-sandbox:latest ./docker/laravel-sandbox/
+            echo ">>> [Background] Sandbox image build COMPLETE."
+        else
+            echo ">>> [Background] Sandbox image already exists."
         fi
-        sleep 1
-    done
-
-    echo ">>> Docker is alive. Starting background sandbox preparation..."
-    if ! docker image inspect laravel-sandbox:latest > /dev/null 2>&1; then
-        echo ">>> [Background] Sandbox image missing. Starting build (~10 mins)..."
-        docker build -t laravel-sandbox:latest ./docker/laravel-sandbox/
-        echo ">>> [Background] Sandbox image build COMPLETE."
-    else
-        echo ">>> [Background] Sandbox image already exists."
-    fi
-) &
+    ) &
+fi
 
 
 # 4. Launch with Gunicorn
