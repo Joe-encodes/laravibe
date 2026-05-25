@@ -14,7 +14,7 @@ class ProductController extends Controller
      */
     public function index(): JsonResponse
     {
-        $products = Product::orderBy('created_at', 'desc')->paginate(20);
+        $products = Product::orderBy('created_at', 'desc')->get();
         return response()->json($products);
     }
 
@@ -44,6 +44,22 @@ class ProductController extends Controller
     }
 
     /**
+     * Update an existing product.
+     */
+    public function update(Request $request, int $id): JsonResponse
+    {
+        $product = Product::findOrFail($id);
+        $validated = $request->validate([
+            'name'        => 'sometimes|string|max:255',
+            'description' => 'nullable|string',
+            'price'       => 'sometimes|numeric|min:0',
+            'stock'       => 'sometimes|integer|min:0',
+        ]);
+        $product->update($validated);
+        return response()->json($product);
+    }
+
+    /**
      * Soft-delete a product by ID.
      */
     public function destroy(int $id): JsonResponse
@@ -52,4 +68,30 @@ class ProductController extends Controller
         $product->delete();
         return response()->json(['message' => 'Product deleted.']);
     }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// BUG: The Product model below is MISSING the SoftDeletes trait.
+// The destroy() method above calls $product->delete(), but without SoftDeletes
+// the record is permanently deleted — not soft-deleted — causing the test to fail
+// when asserting the record is present with a deleted_at timestamp.
+// ──────────────────────────────────────────────────────────────────────────────
+
+namespace App\Models;
+
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
+// MISSING: use Illuminate\Database\Eloquent\SoftDeletes;
+
+class Product extends Model
+{
+    use HasFactory;
+    // MISSING: use SoftDeletes;
+
+    protected $fillable = [
+        'name',
+        'description',
+        'price',
+        'stock',
+    ];
 }

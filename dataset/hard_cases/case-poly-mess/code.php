@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Comment;
 use App\Models\Post;
 use App\Models\Video;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class PolymorphicController extends Controller
@@ -15,7 +16,7 @@ class PolymorphicController extends Controller
      * 1. Models don't have polymorphic relations defined.
      * 2. Migration for comments is missing morph columns.
      */
-    public function store(Request $request)
+    public function store(Request $request): JsonResponse
     {
         $request->validate([
             'body' => 'required|string',

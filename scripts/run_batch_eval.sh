@@ -3,7 +3,6 @@
 # Triggers a batch evaluation across the entire dataset and polls for completion.
 
 APP_URL="${APP_URL:-http://localhost:8000}"
-MASTER_TOKEN="${MASTER_TOKEN:-change-me-in-production}"
 
 echo "=========================================================="
 echo "    LaraVibe Repair Platform — Batch Evaluation"
@@ -11,9 +10,29 @@ echo "    Target: $APP_URL"
 echo "=========================================================="
 echo ""
 
+# Try to read MASTER_REPAIR_TOKEN from .env if not already set
+if [ -z "$MASTER_TOKEN" ] && [ -f .env ]; then
+    MASTER_TOKEN=$(grep -E "^MASTER_REPAIR_TOKEN=" .env | cut -d'=' -f2 | tr -d '\r')
+fi
+MASTER_TOKEN="${MASTER_TOKEN:-laravibe-repair-2026-safe-token}"
+
+# Login to get JWT Token
+echo "🔑 Logging in to retrieve session JWT ..."
+LOGIN_RESP=$(curl -sL -X POST "$APP_URL/api/auth/login" \
+     -H "Content-Type: application/json" \
+     -d "{\"token\": \"$MASTER_TOKEN\"}")
+
+JWT_TOKEN=$(echo "$LOGIN_RESP" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+if [ -z "$JWT_TOKEN" ]; then
+    echo "❌ Login failed. Check your MASTER_TOKEN."
+    echo "Response: $LOGIN_RESP"
+    exit 1
+fi
+
 echo "🚀 Triggering Batch Evaluation..."
 RESP=$(curl -s -X POST "$APP_URL/api/evaluate" \
-     -H "Authorization: Bearer $MASTER_TOKEN" \
+     -H "Authorization: Bearer $JWT_TOKEN" \
      -H "Content-Type: application/json")
 
 EXP_ID=$(echo "$RESP" | grep -o '"experiment_id":"[^"]*' | cut -d'"' -f4)
@@ -29,7 +48,7 @@ echo "⏳ Polling for results (this may take 5-15 mins)..."
 
 while true; do
     STATUS_RESP=$(curl -s -X GET "$APP_URL/api/evaluate/$EXP_ID" \
-        -H "Authorization: Bearer $MASTER_TOKEN")
+        -H "Authorization: Bearer $JWT_TOKEN")
     STATUS=$(echo "$STATUS_RESP" | grep -o '"status":"[^"]*' | cut -d'"' -f4)
     
     if [ "$STATUS" == "completed" ]; then

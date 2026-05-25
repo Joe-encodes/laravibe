@@ -3,9 +3,28 @@
 # Sends a specific broken code snippet to the backend and streams the repair execution logs.
 
 APP_URL="${APP_URL:-http://localhost:8000}"
-MASTER_TOKEN="${MASTER_TOKEN:-change-me-in-production}"
 
 API_URL="$APP_URL/api/repair"
+
+# Try to read MASTER_REPAIR_TOKEN from .env if not already set
+if [ -z "$MASTER_TOKEN" ] && [ -f .env ]; then
+    MASTER_TOKEN=$(grep -E "^MASTER_REPAIR_TOKEN=" .env | cut -d'=' -f2 | tr -d '\r')
+fi
+MASTER_TOKEN="${MASTER_TOKEN:-laravibe-repair-2026-safe-token}"
+
+# Login to get JWT Token
+echo "🔑 Logging in to retrieve session JWT ..."
+LOGIN_RESP=$(curl -sL -X POST "$APP_URL/api/auth/login" \
+     -H "Content-Type: application/json" \
+     -d "{\"token\": \"$MASTER_TOKEN\"}")
+
+JWT_TOKEN=$(echo "$LOGIN_RESP" | grep -o '"access_token":"[^"]*' | cut -d'"' -f4)
+
+if [ -z "$JWT_TOKEN" ]; then
+    echo "❌ Login failed. Check your MASTER_TOKEN."
+    echo "Response: $LOGIN_RESP"
+    exit 1
+fi
 
 # We simulate case-002: wrong_namespace.
 PAYLOAD=$(cat << 'EOF'
@@ -23,7 +42,7 @@ echo "--------------------------------------------------------"
 
 # 1. Submit the repair request
 RESPONSE=$(curl -s -X POST "$API_URL" \
-     -H "Authorization: Bearer $MASTER_TOKEN" \
+     -H "Authorization: Bearer $JWT_TOKEN" \
      -H "Content-Type: application/json" \
      -d "$PAYLOAD")
 
@@ -41,7 +60,7 @@ echo "📡 Attaching to live Event Stream..."
 echo "--------------------------------------------------------"
 
 # 2. Connect to the SSE stream to watch the repair loop
-curl -N -s "$API_URL/$SUBMISSION_ID/stream?token=$MASTER_TOKEN"
+curl -N -s "$API_URL/$SUBMISSION_ID/stream?token=$JWT_TOKEN"
 
 echo ""
 echo "--------------------------------------------------------"
