@@ -77,6 +77,7 @@ RUN composer require predis/predis --no-progress && \
         "pestphp/pest:^3.0" \
         "pestphp/pest-plugin-laravel:^3.0" \
         "pestphp/pest-plugin-mutate:^3.0" \
+        phpstan/phpstan \
         --with-all-dependencies \
         --no-progress
 

@@ -1,0 +1,23 @@
+# Exclude git, cache, and dev files from Docker build context
+.git
+.gitignore
+__pycache__
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+data/
+logs/
+tests/
+mcp/
+.github/
+scripts/
+*.md
+*.sqlite
+*.sqlite3
+*.db
+live_test_runner.py
+scratch/
+laravibe-fe/node_modules/
+laravibe-fe/dist/

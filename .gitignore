@@ -40,6 +40,7 @@ test_code.php
 test_minimal.py
 test_repair_v4.py
 live_test_runner.py
+tests/orchestrator_output.txt
 
 # IDEs & OS
 .vscode/
