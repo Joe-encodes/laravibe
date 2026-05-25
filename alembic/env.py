@@ -28,6 +28,9 @@ if db_url.startswith("postgresql://"):
 elif db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+asyncpg://")
 
+# Escape '%' to prevent configparser from throwing an interpolation error
+db_url = db_url.replace("%", "%%")
+
 config.set_main_option("sqlalchemy.url", db_url)
 
 # Interpret the config file for Python logging.
